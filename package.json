@@ -1,0 +1,46 @@
+{
+  "name": "smart-shopping-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Smart Shopping Price Intelligence Platform - monorepo (web, mobile, API, shared contracts)",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:shared": "npm run build --workspace @smart-shopping/shared",
+    "build:api": "npm run build:shared && npm run build --workspace @smart-shopping/api",
+    "build:web": "npm run build:shared && npm run build --workspace @smart-shopping/web",
+    "build": "npm run build:shared && npm run build --workspace @smart-shopping/api && npm run build --workspace @smart-shopping/web",
+    "dev:api": "npm run dev --workspace @smart-shopping/api",
+    "dev:web": "npm run dev --workspace @smart-shopping/web",
+    "dev:mobile": "npm run start --workspace @smart-shopping/mobile",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "verify": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  }
+}
