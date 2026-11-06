@@ -24,11 +24,22 @@ export { dependencyStatusSchema, healthResponseSchema } from './contracts/health
 export type { HealthResponse, DependencyStatus } from './contracts/health.js';
 
 export {
+  palette,
+  themes,
   colors,
   spacing,
   radii,
   fontSizes,
+  lineHeights,
   fontWeights,
+  elevation,
+  layout,
+  type ThemeName,
+  type ThemeColors,
   type AppColors,
   type AppSpacing,
+  type AppTheme,
 } from './theme/tokens.js';
+
+// Demo catalogue: clearly-labelled sample data shared by both clients.
+export * from './demo/catalog.js';

@@ -3,10 +3,14 @@
 Price intelligence for shoppers who compare the same product across competing marketplaces: search
 once, see every marketplace's price side by side, and follow the cheapest **verified** offer.
 
-> **Status: Sprint 0 (foundation only).** Three applications boot, a real health endpoint reports
-> dependency state honestly, shared contracts and documentation exist. There is **no** product
-> search, price comparison, authentication, marketplace integration or sample catalogue data yet.
-> Nothing here fabricates prices or claims an integration we do not have authorised access to.
+> **Status: Sprint 1 (premium UI, frontend only).** Three applications boot, a real health endpoint
+> reports dependency state honestly, and both clients now ship the full interface: home, search and
+> filtering, product comparison, price tracking, premium, profile and sign-in. Catalogue and prices
+> are an explicitly labelled **sample** dataset; there is no marketplace integration,
+> authentication, advertising or billing, and deal buttons are disabled because no outbound
+> affiliate link exists. Nothing here fabricates a live price or claims access we do not have.
+>
+> What shipped: [Sprint 1 report](docs/SPRINT_1_REPORT.md).
 
 ## Repository layout
 
@@ -122,6 +126,8 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 | [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints |
 | [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup        |
 | [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                    |
+| [SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md)                   | Sprint 1 screens, components, gates, known issues       |
+| [INGESTION_FEASIBILITY.md](docs/INGESTION_FEASIBILITY.md)       | Amazon/Flipkart data access, provider costs, GO / NO-GO |
 
 ## Known constraints
 

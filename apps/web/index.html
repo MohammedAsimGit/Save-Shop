@@ -3,8 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#0f766e" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#16a34a" />
+    <!--
+      Inter is the design-system typeface. It is loaded here rather than bundled so
+      the repo carries no font binaries; the CSS stack falls back to system-ui when
+      the font host is unreachable (offline dev, strict CSP).
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    />
     <meta
       name="description"
       content="Smart Shopping Price Intelligence Platform - compare verified prices across marketplaces."

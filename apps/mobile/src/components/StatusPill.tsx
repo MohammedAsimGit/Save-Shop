@@ -1,14 +1,16 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { statusTone, theme, type StatusTone } from '../theme';
+import { statusToneColors, type StatusTone } from '../theme';
+import { useAppTheme } from '../theme/ThemeProvider';
 
 export function StatusPill({ tone, label }: { readonly tone: StatusTone; readonly label: string }) {
-  const palette = statusTone[tone];
+  const { colors } = useAppTheme();
+  const toneColors = statusToneColors(colors)[tone];
 
   return (
-    <View style={[styles.pill, { backgroundColor: palette.background }]}>
-      <View style={[styles.dot, { backgroundColor: palette.text }]} />
-      <Text style={[styles.label, { color: palette.text }]}>{label}</Text>
+    <View style={[styles.pill, { backgroundColor: toneColors.background }]}>
+      <View style={[styles.dot, { backgroundColor: toneColors.text }]} />
+      <Text style={[styles.label, { color: toneColors.text }]}>{label}</Text>
     </View>
   );
 }
@@ -17,19 +19,12 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.spacing.xs,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
     alignSelf: 'flex-start',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: theme.radii.pill,
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  label: {
-    fontSize: theme.fontSizes.xs,
-    fontWeight: '600',
-  },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  label: { fontSize: 12, fontWeight: '600' },
 });

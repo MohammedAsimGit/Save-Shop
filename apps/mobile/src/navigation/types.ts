@@ -1,17 +1,18 @@
-/** Root stack routes. Screens for later sprints are added here as they land. */
-export type RootStackParamList = {
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
+/** Bottom tabs: the four primary destinations. */
+export type TabParamList = {
   Home: undefined;
-  Diagnostics: undefined;
+  Search: { query?: string; category?: string; marketplace?: string } | undefined;
+  Tracking: undefined;
+  Profile: undefined;
 };
 
-declare global {
-  // Module declaration merging is the documented React Navigation pattern.
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace ReactNavigation {
-    // Makes useNavigation() typed without importing the param list everywhere.
-    // Declaration merging requires an interface, so the empty-body rule has to
-    // be waived here; there is no non-empty member to add.
-    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-    interface RootParamList extends RootStackParamList {}
-  }
-}
+/** Root stack: tabs plus full-screen flows that sit above them. */
+export type RootStackParamList = {
+  Tabs: NavigatorScreenParams<TabParamList> | undefined;
+  Product: { productId: string };
+  Premium: undefined;
+  SignIn: undefined;
+  Diagnostics: undefined;
+};

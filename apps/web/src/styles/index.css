@@ -1,53 +1,171 @@
 @import 'tailwindcss';
 
 /*
- * Design tokens for the web app.
- * These mirror `packages/shared/src/theme/tokens.ts`, which is the source of
- * truth for the React Native app (Tailwind v4 reads CSS, not TypeScript).
- * Update both files together.
+ * Web design tokens.
+ *
+ * Mirrors `packages/shared/src/theme/tokens.ts` (Tailwind v4 reads CSS, not TS).
+ * Light and dark are both first-class: `data-theme` on <html> selects the values,
+ * and Tailwind's `dark:` variant follows the same switch.
  */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 @theme {
   --color-background: #f8fafc;
+  --color-background-alt: #ffffff;
   --color-surface: #ffffff;
   --color-surface-muted: #f1f5f9;
-  --color-ink: #0f172a;
-  --color-ink-muted: #475569;
-  --color-brand: #0f766e;
-  --color-brand-soft: #f0fdfa;
-  --color-border-subtle: #e2e8f0;
-  --color-status-ok: #15803d;
-  --color-status-warn: #b45309;
-  --color-status-error: #b91c1c;
+  --color-ink: #111827;
+  --color-ink-muted: #6b7280;
+  --color-ink-subtle: #64748b;
+  --color-line: #e5e7eb;
+  --color-line-strong: #cbd5e1;
+  --color-brand: #16a34a;
+  --color-brand-dark: #15803d;
+  --color-brand-soft: #f0fdf4;
+  --color-on-brand: #ffffff;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #dc2626;
+  --color-discount: #ea580c;
 
-  --radius-card: 16px;
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+
+  --radius-card: 22px;
+  --radius-tile: 16px;
+
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 8px 24px -12px rgb(15 23 42 / 0.12);
+  --shadow-card: 0 1px 3px rgb(15 23 42 / 0.05), 0 18px 40px -28px rgb(15 23 42 / 0.35);
+  --shadow-float: 0 24px 60px -32px rgb(15 23 42 / 0.45);
+
+  --animate-rise: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade: fade 0.35s ease-out both;
+}
+
+/* Dark theme: same role names, different values. */
+[data-theme='dark'] {
+  --color-background: #020617;
+  --color-background-alt: #0f172a;
+  --color-surface: #0b1220;
+  --color-surface-muted: #1e293b;
+  --color-ink: #f8fafc;
+  --color-ink-muted: #cbd5e1;
+  --color-ink-subtle: #94a3b8;
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+  --color-brand: #22c55e;
+  --color-brand-dark: #16a34a;
+  --color-brand-soft: rgb(34 197 94 / 0.14);
+  --color-on-brand: #052e16;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-discount: #fb923c;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.5), 0 18px 40px -28px rgb(0 0 0 / 0.8);
+  --shadow-float: 0 24px 60px -32px rgb(0 0 0 / 0.9);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
 
   body {
     @apply bg-background text-ink antialiased;
     margin: 0;
     min-height: 100dvh;
-    font-family:
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      'Segoe UI',
-      Roboto,
-      Helvetica,
-      Arial,
-      sans-serif;
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
   }
 
   #root {
     min-height: 100dvh;
   }
 
+  /* Prices and any aligned numerals must not jitter between values. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
   :focus-visible {
     outline: 2px solid var(--color-brand);
     outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-brand) 22%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /*
+   * The reference's barely-there geometric backdrop. Implemented as two very
+   * low-opacity layers so it reads as texture, never as decoration.
+   */
+  .bg-grid {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgb(15 23 42 / 0.055) 1px, transparent 0),
+      radial-gradient(circle at 80% -10%, rgb(22 163 74 / 0.08), transparent 45%);
+    background-size:
+      22px 22px,
+      100% 100%;
+  }
+
+  [data-theme='dark'] .bg-grid {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgb(148 163 184 / 0.12) 1px, transparent 0),
+      radial-gradient(circle at 80% -10%, rgb(34 197 94 / 0.12), transparent 45%);
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Keeps the mobile tab bar clear of iOS home-indicator space. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 }

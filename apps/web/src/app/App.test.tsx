@@ -1,67 +1,68 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ThemeProvider } from '../theme/ThemeProvider';
 import { routes } from './routes';
-
-const healthPayload = {
-  status: 'ok',
-  service: 'smart-shopping-api',
-  version: '0.1.0',
-  environment: 'test',
-  uptimeSeconds: 3,
-  timestamp: '2026-01-01T00:00:00.000Z',
-  checks: { database: { status: 'not_configured' } },
-};
 
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  return render(<RouterProvider router={router} />);
-}
-
-function mockFetchOnce(body: unknown, init: ResponseInit = { status: 200 }) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status: init.status,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ),
+  return render(
+    <ThemeProvider>
+      <RouterProvider router={router} />
+    </ThemeProvider>,
   );
 }
 
-describe('web shell', () => {
+describe('SaveShop web interface', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    localStorage.clear();
+    document.documentElement.dataset.theme = 'light';
   });
 
-  it('renders the Sprint 0 placeholder and reports API health', async () => {
-    mockFetchOnce({ data: healthPayload });
-
+  it('renders the landing page with an honest sample-data disclosure', () => {
     renderAt('/');
 
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      /platform skeleton is running/i,
-    );
-    await waitFor(() => expect(screen.getByText(/Healthy/i)).toBeInTheDocument());
-    expect(screen.getByText('not_configured')).toBeInTheDocument();
-    // Sprint 0 must never present fabricated commerce data.
-    expect(screen.getByText(/No prices are fabricated/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/find the real price/i);
+    expect(screen.getAllByText(/invented, not live marketplace prices/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('search', { name: 'Product search' })).toBeInTheDocument();
   });
 
-  it('explains how to start the API when it is unreachable', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection refused')));
-
+  it('carries a search query into the results page and filters the catalogue', async () => {
     renderAt('/');
 
-    await waitFor(() => expect(screen.getByText(/Start the API with/i)).toBeInTheDocument());
-    expect(screen.getByText(/Unreachable/i)).toBeInTheDocument();
+    const input = screen.getByPlaceholderText('Search products, brands or categories');
+    fireEvent.change(input, { target: { value: 'iphone' } });
+    fireEvent.submit(input.closest('form') as HTMLFormElement);
+
+    expect(
+      await screen.findByRole('heading', { name: /results for "iphone"/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Apple iPhone 15/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Sony WH-1000XM5/i)).not.toBeInTheDocument();
   });
 
-  it('renders the 404 page for unknown routes', async () => {
-    mockFetchOnce({ data: healthPayload });
+  it('marks the cheapest in-stock offer on the product page', () => {
+    renderAt('/product/sony-wh1000xm5');
 
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/Sony WH-1000XM5/i);
+    // Exactly one offer earns the "Lowest" label.
+    expect(screen.getAllByText('Lowest')).toHaveLength(1);
+    expect(screen.getAllByText(/Amazon India/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Out of stock/i)).toBeInTheDocument();
+  });
+
+  it('switches to the dark theme and remembers the choice', async () => {
+    renderAt('/profile');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dark' }));
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+    expect(localStorage.getItem('saveshop-theme')).toBe('dark');
+  });
+
+  it('renders the 404 page for unknown routes', () => {
     renderAt('/does-not-exist');
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/does not exist/i);
