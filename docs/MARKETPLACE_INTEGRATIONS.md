@@ -5,7 +5,11 @@ implemented. No marketplace credentials exist. No marketplace has been contacted
 access to this project.**
 
 Sprint 0 deliberately stops before any external commerce integration. This file records the
-constraints that must be satisfied before Sprint 1 work on ingestion can begin.
+constraints that must be satisfied before any ingestion work begins.
+
+> **Update (6 Nov 2026):** the feasibility spike has been done — see
+> [INGESTION_FEASIBILITY.md](INGESTION_FEASIBILITY.md) for the current eligibility rules, provider
+> pricing and the GO / CONDITIONAL GO / NO-GO verdict per channel. The rules below still stand.
 
 ## 1. Current state
 
