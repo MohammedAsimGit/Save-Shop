@@ -75,4 +75,37 @@ describe('environment validation', () => {
       /Invalid origin/,
     );
   });
+
+  it('defaults demo persistence on outside production and off in it', () => {
+    expect(parseEnvironment({}).persistDemoSnapshots).toBe(true);
+    expect(
+      parseEnvironment({
+        NODE_ENV: 'production',
+        MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
+        CORS_ALLOWED_ORIGINS: 'https://example.com',
+      }).persistDemoSnapshots,
+    ).toBe(false);
+  });
+
+  it('lets an explicit PERSIST_DEMO_SNAPSHOTS decide', () => {
+    expect(parseEnvironment({ PERSIST_DEMO_SNAPSHOTS: 'false' }).persistDemoSnapshots).toBe(false);
+    expect(
+      parseEnvironment({
+        NODE_ENV: 'production',
+        MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
+        CORS_ALLOWED_ORIGINS: 'https://example.com',
+        PERSIST_DEMO_SNAPSHOTS: 'true',
+      }).persistDemoSnapshots,
+    ).toBe(true);
+  });
+
+  it('defaults the comparison cache to five minutes and validates its range', () => {
+    expect(parseEnvironment({}).COMPARISON_CACHE_TTL_SECONDS).toBe(300);
+    expect(
+      parseEnvironment({ COMPARISON_CACHE_TTL_SECONDS: '0' }).COMPARISON_CACHE_TTL_SECONDS,
+    ).toBe(0);
+    expect(() => parseEnvironment({ COMPARISON_CACHE_TTL_SECONDS: '-1' })).toThrow(
+      /COMPARISON_CACHE_TTL_SECONDS/,
+    );
+  });
 });

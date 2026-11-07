@@ -34,11 +34,11 @@ export const sourceVerificationSchema = z.enum(['verified', 'sample']);
 /** Permission state, mirroring the ingestion feasibility findings. */
 export const sourcePermissionStatusSchema = z.enum(['granted', 'pending', 'not_requested']);
 
-const isoDateTime = z.string().refine((value) => {
+export const isoDateTimeSchema = z.string().refine((value) => {
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value) && !Number.isNaN(Date.parse(value));
 }, 'must be an ISO 8601 date-time');
 
-const httpUrl = z
+export const httpUrlSchema = z
   .string()
   .refine((value) => /^https?:\/\/[^\s]+$/i.test(value), 'must be an http(s) URL');
 
@@ -63,7 +63,7 @@ export const marketSourceSchema = z.object({
   verification: sourceVerificationSchema,
   attribution: z.object({
     label: z.string().min(1).max(160),
-    url: httpUrl.optional(),
+    url: httpUrlSchema.optional(),
   }),
   permission: z.object({
     status: sourcePermissionStatusSchema,
@@ -97,16 +97,16 @@ export const offerSnapshotSchema = z.object({
   productId: z.string().min(1).max(120),
   marketplaceId: z.string().min(1).max(80),
   sourceId: z.string().min(1).max(80),
-  productUrl: httpUrl,
+  productUrl: httpUrlSchema,
   price: moneySchema,
   availability: offerAvailabilitySchema,
   /** When the price was observed, not when it was fetched. */
-  capturedAt: isoDateTime,
+  capturedAt: isoDateTimeSchema,
   /** How long this observation may be presented as current. */
   ttlSeconds: z.number().int().min(30).max(604_800),
   attribution: z.object({
     label: z.string().min(1).max(160),
-    url: httpUrl.optional(),
+    url: httpUrlSchema.optional(),
   }),
 });
 
@@ -162,7 +162,7 @@ export const comparisonResultSchema = z.object({
   productId: z.string().min(1),
   /** The currency the comparison was ranked in. */
   currency: currencyCode,
-  generatedAt: isoDateTime,
+  generatedAt: isoDateTimeSchema,
   /** Cheapest eligible offer, verified or not. */
   lowest: comparedOfferSchema.nullable(),
   /** Cheapest eligible offer from a source permitted to verify prices. */
@@ -195,7 +195,7 @@ export type ProductComparisonResponse = z.infer<typeof productComparisonResponse
 
 /** GET {API_PREFIX}/sources */
 export const sourceCoverageResponseSchema = z.object({
-  generatedAt: isoDateTime,
+  generatedAt: isoDateTimeSchema,
   sources: z.array(marketSourceSchema),
   /** Human-readable summary of what is and is not covered today. */
   notices: z.array(z.string().max(300)),

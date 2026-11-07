@@ -4,6 +4,7 @@ import { createApp } from './app.js';
 import { env, isProduction } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { logger } from './config/logger.js';
+import { ensureModelIndexes } from './models/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -16,6 +17,16 @@ async function start(): Promise<void> {
     const connected = await connectDatabase();
     if (!connected && isProduction) {
       throw new Error('MONGODB_URI is required in production');
+    }
+
+    if (connected) {
+      // History correctness depends on these indexes existing, not on autoIndex timing.
+      try {
+        await ensureModelIndexes();
+        logger.info('Price snapshot and comparison cache indexes ensured');
+      } catch (error) {
+        logger.error({ err: error }, 'Could not ensure MongoDB indexes');
+      }
     }
   } catch (error) {
     logger.fatal({ err: error }, 'Unable to connect to MongoDB');

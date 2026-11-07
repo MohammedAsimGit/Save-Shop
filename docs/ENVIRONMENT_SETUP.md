@@ -55,7 +55,13 @@ API_PREFIX=/api/v1
 MONGODB_URI=            # leave empty to run without MongoDB
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 LOG_LEVEL=info
+COMPARISON_CACHE_TTL_SECONDS=300   # 0 disables comparison caching
+PERSIST_DEMO_SNAPSHOTS=true        # default: on outside production, off in it
 ```
+
+`MONGODB_URI` empty is still supported: the API then keeps price history and the comparison cache in
+memory for the life of the process, and says so in the logs. Point it at a local MongoDB to keep
+history across restarts and to exercise the `price_snapshots` / `comparison_cache` collections.
 
 Web:
 

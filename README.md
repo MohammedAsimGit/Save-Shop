@@ -3,15 +3,17 @@
 Price intelligence for shoppers who compare the same product across competing marketplaces: search
 once, see every marketplace's price side by side, and follow the cheapest **verified** offer.
 
-> **Status: Sprint 2 (price comparison engine, no live marketplace).** A source-independent
-> comparison engine now ranks price snapshots behind two API endpoints, and both clients render what
-> it returns: lowest eligible offer, marketplace, observation time, source attribution, freshness and
-> a DEMO badge. The only enabled source is a deterministic sample adapter, so every price you see is
-> invented and labelled as such; Amazon and Flipkart exist only as disabled descriptors awaiting
+> **Status: Sprint 3 (persistence, price history and caching, still no live marketplace).**
+> Observations are now stored in MongoDB (`price_snapshots`), served through a validated history
+> endpoint, and charted on the product page of both clients. Comparison responses are cached per
+> product and source set, never past the shortest remaining source freshness. The only enabled
+> source is still a deterministic sample adapter, so every price and every history point you see is
+> invented demo data and labelled as such; Amazon and Flipkart remain disabled descriptors awaiting
 > written permission. There is no scraper, no marketplace integration, no authentication, no
-> advertising, no billing, and deal buttons are disabled because no outbound link is authorised.
+> advertising, no billing, and deal buttons stay disabled because no outbound link is authorised.
 >
-> What shipped: [Sprint 2 report](docs/SPRINT_2_REPORT.md) · [Sprint 1 report](docs/SPRINT_1_REPORT.md).
+> What shipped: [Sprint 3 report](docs/SPRINT_3_REPORT.md) ·
+> [Sprint 2 report](docs/SPRINT_2_REPORT.md) · [Sprint 1 report](docs/SPRINT_1_REPORT.md).
 
 ## Repository layout
 
@@ -65,15 +67,19 @@ The web page shows the live API health state, so it doubles as a smoke test of t
 `MONGODB_URI` may stay empty; health then reports `database.status = "not_configured"` instead of
 pretending the database is up.
 
-A product page then exercises the comparison engine end to end:
+A product page then exercises the engine end to end:
 
 ```bash
 curl -s localhost:4000/api/v1/products/sony-wh1000xm5/comparison   # ranked offers + exclusions
+curl -s localhost:4000/api/v1/products/sony-wh1000xm5/history      # stored observations, 30d default
+curl -s "localhost:4000/api/v1/products/sony-wh1000xm5/history?period=7d&limit=50"
 curl -s localhost:4000/api/v1/sources                              # which sources exist, and why not
 ```
 
-Both answers carry `status: "sample_only"` and a demo notice, because the demo adapter is the only
-enabled source. Web keeps the API base URL in `apps/web/.env.local`
+All of them carry `status: "sample_only"` and a demo notice, because the demo adapter is the only
+enabled source. With `MONGODB_URI` empty the API keeps history in memory for the life of the process
+and logs that choice; point it at a real MongoDB (e.g. `mongodb://127.0.0.1:27017/saveshop`) to keep
+history across restarts. Web keeps the API base URL in `apps/web/.env.local`
 (`VITE_API_BASE_URL=http://localhost:4100/api/v1` for the current local setup).
 
 Full environment guide: [docs/ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md).
@@ -133,11 +139,12 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md)                         | Delivered foundation vs. planned product requirements   |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md)                         | Layer boundaries, request lifecycle, decisions          |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md)                 | Where every kind of file belongs                        |
-| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, error codes, health, comparison, sources      |
-| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Planned collections, indexing, price snapshots          |
+| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, errors, health, comparison, history, sources  |
+| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | `price_snapshots` + cache schemas, indexes, retention   |
 | [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints |
 | [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup        |
 | [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                    |
+| [SPRINT_3_REPORT.md](docs/SPRINT_3_REPORT.md)                   | Sprint 3 persistence, history API, cache, gates, limits |
 | [SPRINT_2_REPORT.md](docs/SPRINT_2_REPORT.md)                   | Sprint 2 engine, adapters, endpoints, gates, limits     |
 | [SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md)                   | Sprint 1 screens, components, gates, known issues       |
 | [INGESTION_FEASIBILITY.md](docs/INGESTION_FEASIBILITY.md)       | Amazon/Flipkart data access, provider costs, GO / NO-GO |
@@ -148,7 +155,10 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
   per provider; until that exists there is no scraper and no mock data standing in for it. The
   comparison engine is therefore exercised by a clearly labelled demo adapter. See
   [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md).
-- **Product identity is still catalogue-owned.** Offers come from adapters, but the product list is
-  the shared demo catalogue; there is no catalogue ingestion or price history store yet.
+- **Product identity is still catalogue-owned.** Offers and history come from adapters, but the
+  product list is the shared demo catalogue; there is no catalogue ingestion yet.
+- **History contains demo observations, not marketplace history.** Sample rows are stored only
+  outside production, always marked `isSample`, and summarised separately from verified data. No
+  snapshot compaction or retention job exists yet.
 - **Authentication is not implemented.** Firebase is the intended provider; no credentials exist.
 - **No CI/CD, Docker or deployment** in this sprint.

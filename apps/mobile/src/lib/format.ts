@@ -27,6 +27,18 @@ export function formatCompactCount(count: number): string {
   return `${Math.round(count / 1000)}k`;
 }
 
+/** "7 Nov" - short axis label; the year is implied by the period window. */
+export function formatShortDate(iso: string): string {
+  const timestamp = Date.parse(iso);
+  if (Number.isNaN(timestamp)) return '—';
+
+  try {
+    return new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short' }).format(timestamp);
+  } catch {
+    return new Date(timestamp).toDateString().slice(4, 10);
+  }
+}
+
 export function formatRelativeTime(iso: string): string {
   const timestamp = new Date(iso).getTime();
   if (Number.isNaN(timestamp)) return 'unknown';

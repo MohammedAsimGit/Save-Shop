@@ -16,6 +16,7 @@ import { DemoNotice } from '../components/ui/DemoNotice';
 import { EmptyState } from '../components/ui/EmptyState';
 import { SkeletonBlock } from '../components/ui/LoadingSkeleton';
 import { PageContainer } from '../components/ui/PageContainer';
+import { PriceHistorySection } from '../components/ui/PriceHistorySection';
 import { DealLinkNote, PriceComparisonCard } from '../components/ui/PriceComparisonCard';
 import { PriceLabel } from '../components/ui/PriceLabel';
 import { ProductCard } from '../components/ui/ProductCard';
@@ -299,16 +300,7 @@ export function ProductPage() {
             </ul>
           </section>
 
-          <section className="rounded-card border border-dashed border-line-strong/70 bg-surface-muted/50 p-5">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
-              <Info aria-hidden="true" className="size-4 text-ink-subtle" />
-              Price history is not available yet
-            </h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              A trend chart needs stored observations from an authorised source. Sprint 2 ranks
-              snapshots, it does not keep a history.
-            </p>
-          </section>
+          <PriceHistorySection productId={product.id} />
         </div>
       </div>
 

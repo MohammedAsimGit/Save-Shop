@@ -152,6 +152,17 @@ Field rules:
 - **No conversion, no invention.** A price in another currency is excluded rather than converted,
   and shipping, discounts and delivery estimates are absent because no source supplies them.
 
+Caching (Sprint 3):
+
+- a response is cached per product, currency and enabled-source set, for at most
+  `COMPARISON_CACHE_TTL_SECONDS` (default 300 s) **and never longer than the smallest remaining
+  source freshness**; a cached offer that would have aged past its TTL is discarded and the
+  comparison recomputed;
+- a run in which any adapter failed is never cached, so a transient provider error cannot pin a
+  degraded answer in place;
+- the cached payload is re-parsed against the contract on every hit, and a cache outage degrades to
+  a normal recomputation rather than an error.
+
 ## 5. `GET /api/v1/sources`
 
 Reports which price sources exist, which are enabled, and why the rest are not.
@@ -195,7 +206,96 @@ A disabled source is a descriptor only: it has no request code, no endpoint and 
 its adapter throws if anything tries to query it. See
 [INGESTION_FEASIBILITY.md](INGESTION_FEASIBILITY.md) for the evidence behind each status.
 
-## 6. Other endpoints
+## 6. `GET /api/v1/products/:productId/history`
+
+Stored price observations for one product. Every point is a row that was actually ingested from a
+source; nothing is interpolated, smoothed, back-filled or synthesised. A product with one
+observation returns one observation.
+
+Query parameters (all validated with Zod; unknown values are a `400`):
+
+| Parameter       | Type                   | Default | Notes                                                         |
+| --------------- | ---------------------- | ------- | ------------------------------------------------------------- |
+| `period`        | `7d` \| `30d` \| `90d` | `30d`   | Window ends now; no arbitrary ranges                          |
+| `sourceId`      | string                 | —       | Exact source filter                                           |
+| `marketplaceId` | string                 | —       | Exact marketplace filter                                      |
+| `limit`         | integer 1–500          | `200`   | Keeps the **most recent** observations, returned oldest first |
+
+**200**
+
+```json
+{
+  "data": {
+    "productId": "sony-wh1000xm5",
+    "product": {
+      "id": "sony-wh1000xm5",
+      "title": "Sony WH-1000XM5",
+      "brand": "Sony",
+      "catalog": "demo-catalog"
+    },
+    "currency": "INR",
+    "period": "30d",
+    "from": "2026-10-08T05:57:26.000Z",
+    "to": "2026-11-07T05:57:26.000Z",
+    "generatedAt": "2026-11-07T05:57:26.000Z",
+    "status": "sample_only",
+    "observations": [
+      {
+        "productId": "sony-wh1000xm5",
+        "marketplaceId": "amazon",
+        "sourceId": "demo-catalog",
+        "productUrl": "https://demo.saveshop.example/product/sony-wh1000xm5",
+        "price": { "amountMinor": 2699000, "currency": "INR" },
+        "availability": "in_stock",
+        "capturedAt": "2026-11-07T05:55:26.000Z",
+        "ttlSeconds": 3600,
+        "attribution": { "label": "Amazon India - invented sample price" },
+        "source": { "id": "demo-catalog", "verification": "sample", "...": "..." },
+        "isSample": true,
+        "freshness": "fresh"
+      }
+    ],
+    "summary": {
+      "verified": { "count": 0, "lowest": null, "latest": null },
+      "sample": {
+        "count": 1,
+        "lowest": {
+          "price": { "amountMinor": 2699000, "currency": "INR" },
+          "capturedAt": "2026-11-07T05:55:26.000Z",
+          "marketplaceId": "amazon",
+          "sourceId": "demo-catalog"
+        },
+        "latest": {
+          "price": { "amountMinor": 2699000, "currency": "INR" },
+          "capturedAt": "2026-11-07T05:55:26.000Z",
+          "marketplaceId": "amazon",
+          "sourceId": "demo-catalog"
+        }
+      }
+    },
+    "filters": { "sourceId": null, "marketplaceId": null, "limit": 200 },
+    "notices": [
+      "History covers 1 stored observation from 2026-10-08 to 2026-11-07.",
+      "Sample observations are invented demo prices, not marketplace history, and are summarised separately from verified observations."
+    ]
+  }
+}
+```
+
+Field rules:
+
+- `observations` — chronological, oldest first. Stale observations are kept (history is history) but
+  carry `freshness: "stale"`, so a client can never present one as current.
+- `summary.verified` / `summary.sample` — **separate by provenance and never merged**. There is no
+  single "lowest ever" figure, because that number would mix invented and observed data.
+- `status` — `no_history`, `sample_only`, `verified` or `mixed`; `mixed` means both provenances are
+  present and the UI must keep them apart.
+- Excluded from the payload and explained in `notices`: unparseable rows, rows from a source that is
+  no longer registered, and prices in another currency (no conversion is performed).
+- A known product with nothing stored is `200` with `status: "no_history"` and an empty
+  `observations` array; an unknown product is `404 NOT_FOUND`.
+
+## 7. Other endpoints
 
 **`GET /`** — discovery document (`{ data: { name, version, apiPrefix } }`). Useful for humans.
 
@@ -205,19 +305,18 @@ its adapter throws if anything tries to query it. See
 `access-control-allow-origin` header. Requests without an `Origin` header (curl, server-to-server,
 native apps) are allowed.
 
-## 7. Planned endpoints (NOT implemented)
+## 8. Planned endpoints (NOT implemented)
 
 Listed only so the contract can be designed coherently later. Definitions, field names and status
 codes are not final and must not be relied upon.
 
 - `GET /products?q=` — search
 - `GET /products/:id` — product with variants
-- `GET /products/:id/history` — stored price observations
 - `GET|POST|DELETE /wishlist`
 - `POST /auth/session` — verify a Firebase token (design undecided)
 - `GET /me/subscription`
 
-## 8. Client behaviour
+## 9. Client behaviour
 
 Both clients implement the same rules in `src/services/apiClient.ts`:
 
@@ -227,5 +326,5 @@ Both clients implement the same rules in `src/services/apiClient.ts`:
 - transport failure → `ApiError` with `code: "NETWORK_ERROR"`;
 - a 2xx body without `data` → `ApiError` with `code: "INVALID_RESPONSE"` (contract drift is never
   silently ignored);
-- comparison and coverage payloads are parsed against their Zod schemas before rendering, so a
-  drifted response surfaces as an error instead of a wrong price.
+- comparison, coverage and history payloads are parsed against their Zod schemas before rendering,
+  so a drifted response surfaces as an error instead of a wrong price or a false trend.

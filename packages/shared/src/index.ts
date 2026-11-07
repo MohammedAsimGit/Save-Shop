@@ -58,6 +58,32 @@ export type {
 export { compareOffers, withProduct } from './comparison/engine.js';
 export type { CompareOffersParams } from './comparison/engine.js';
 
+// Price history contracts (Sprint 3). Sample and verified history stay separated.
+export {
+  historyPeriodSchema,
+  HISTORY_PERIOD_DAYS,
+  DEFAULT_HISTORY_PERIOD,
+  HISTORY_MAX_OBSERVATIONS,
+  priceHistoryQuerySchema,
+  historyObservationSchema,
+  historyPricePointSchema,
+  historyGroupSummarySchema,
+  historySummarySchema,
+  historyStatusSchema,
+  priceHistoryResponseSchema,
+} from './contracts/history.js';
+export { isoDateTimeSchema, httpUrlSchema } from './contracts/comparison.js';
+export type {
+  HistoryPeriod,
+  PriceHistoryQuery,
+  HistoryObservation,
+  HistoryPricePoint,
+  HistoryGroupSummary,
+  HistorySummary,
+  HistoryStatus,
+  PriceHistoryResponse,
+} from './contracts/history.js';
+
 export {
   palette,
   themes,

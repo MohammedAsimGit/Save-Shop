@@ -20,6 +20,7 @@ import { availableMarketplaceCount, categoryById, demoProducts } from '@smart-sh
 
 import { Button } from '../components/Button';
 import { DemoNotice } from '../components/DemoNotice';
+import { PriceHistorySection } from '../components/PriceHistorySection';
 import { useProductComparison } from '../hooks/useProductComparison';
 import { formatMoney, formatRelativeTime } from '../lib/format';
 import type { RootStackParamList } from '../navigation/types';
@@ -275,13 +276,7 @@ export function ProductScreen({ route, navigation }: Props) {
         ))}
       </View>
 
-      <View style={styles.historyCard}>
-        <Text style={styles.historyTitle}>Price history is not available yet</Text>
-        <Text style={styles.historyBody}>
-          A trend chart needs stored observations from an authorised source. This sprint ranks
-          snapshots; it keeps no history.
-        </Text>
-      </View>
+      <PriceHistorySection productId={product.id} />
 
       <DemoNotice />
     </ScrollView>
@@ -405,14 +400,4 @@ const buildStyles = (colors: ThemeColors, isDark: boolean) =>
     highlights: { gap: spacing.sm },
     highlightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
     highlight: { flex: 1, fontSize: fontSizes.sm, color: colors.textMuted, lineHeight: 19 },
-    historyCard: {
-      gap: 4,
-      padding: spacing.lg,
-      borderRadius: radii.lg,
-      borderWidth: 1,
-      borderStyle: 'dashed',
-      borderColor: colors.borderStrong,
-    },
-    historyTitle: { fontSize: fontSizes.sm, fontWeight: '700', color: colors.text },
-    historyBody: { fontSize: fontSizes.xs, color: colors.textMuted, lineHeight: 18 },
   });

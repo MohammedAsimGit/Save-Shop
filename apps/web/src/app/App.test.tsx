@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProductComparisonResponse } from '@smart-shopping/shared';
+import type { PriceHistoryResponse, ProductComparisonResponse } from '@smart-shopping/shared';
 
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { routes } from './routes';
@@ -82,15 +82,87 @@ const comparisonPayload: ProductComparisonResponse = {
   notices: ['Demo source: prices are generated sample values, not marketplace observations.'],
 };
 
-function mockComparison(body: unknown = comparisonPayload, init: ResponseInit = { status: 200 }) {
+const historyObservation = {
+  productId: 'sony-wh1000xm5',
+  marketplaceId: 'amazon',
+  sourceId: 'demo-catalog',
+  productUrl: 'https://demo.saveshop.example/product/sony-wh1000xm5',
+  price: { amountMinor: 2_899_000, currency: 'INR' },
+  availability: 'in_stock' as const,
+  capturedAt: '2026-11-03T09:55:00.000Z',
+  ttlSeconds: 3600,
+  attribution: { label: 'Amazon India - invented sample price' },
+  source: demosource,
+  isSample: true,
+  freshness: 'stale' as const,
+};
+
+const historyPayload: PriceHistoryResponse = {
+  productId: 'sony-wh1000xm5',
+  product: {
+    id: 'sony-wh1000xm5',
+    title: 'Sony WH-1000XM5 Wireless Headphones',
+    brand: 'Sony',
+    catalog: 'demo-catalog',
+  },
+  currency: 'INR',
+  period: '30d',
+  from: '2026-10-07T10:00:00.000Z',
+  to: '2026-11-06T10:00:00.000Z',
+  generatedAt: '2026-11-06T10:00:00.000Z',
+  status: 'sample_only',
+  observations: [
+    historyObservation,
+    {
+      ...historyObservation,
+      price: { amountMinor: 2_699_000, currency: 'INR' },
+      capturedAt: '2026-11-06T09:55:00.000Z',
+      freshness: 'fresh',
+    },
+  ],
+  summary: {
+    verified: { count: 0, lowest: null, latest: null },
+    sample: {
+      count: 2,
+      lowest: {
+        price: { amountMinor: 2_699_000, currency: 'INR' },
+        capturedAt: '2026-11-06T09:55:00.000Z',
+        marketplaceId: 'amazon',
+        sourceId: 'demo-catalog',
+      },
+      latest: {
+        price: { amountMinor: 2_699_000, currency: 'INR' },
+        capturedAt: '2026-11-06T09:55:00.000Z',
+        marketplaceId: 'amazon',
+        sourceId: 'demo-catalog',
+      },
+    },
+  },
+  filters: { sourceId: null, marketplaceId: null, limit: 200 },
+  notices: ['Sample observations are invented demo prices, not marketplace history.'],
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify({ data: body }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const fetchMock = { calls: [] as string[] };
+
+/** Routes comparison and history requests separately, and records the URLs. */
+function mockComparison(body: unknown = comparisonPayload, history: unknown = historyPayload) {
+  fetchMock.calls = [];
+
   vi.stubGlobal(
     'fetch',
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ data: body }), {
-        status: init.status,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      fetchMock.calls.push(url);
+      return url.includes('/history') ? jsonResponse(history) : jsonResponse(body);
+    }),
   );
 }
 
@@ -148,7 +220,8 @@ describe('SaveShop web interface', () => {
     renderAt('/product/sony-wh1000xm5');
 
     expect(await screen.findByText(/comparison unavailable/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    // Both the comparison and the history section offer their own retry.
+    expect(screen.getAllByRole('button', { name: /retry/i }).length).toBeGreaterThan(0);
     expect(screen.queryByText(/₹26,990/)).not.toBeInTheDocument();
   });
 
@@ -158,6 +231,112 @@ describe('SaveShop web interface', () => {
     renderAt('/product/sony-wh1000xm5');
 
     expect(await screen.findByText(/did not match the agreed contract/i)).toBeInTheDocument();
+  });
+
+  it('renders stored demo history with its period, sources and demo labelling', async () => {
+    mockComparison();
+
+    renderAt('/product/sony-wh1000xm5');
+
+    expect(await screen.findByRole('heading', { name: 'Price history' })).toBeInTheDocument();
+    expect(await screen.findByText('Demo observations')).toBeInTheDocument();
+    expect(screen.getByText(/Lowest demo price/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /demo sample price observations over 30 days/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/2 stored observations/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/invented demo prices/i).length).toBeGreaterThan(0);
+  });
+
+  it('refetches history when a different period is selected', async () => {
+    mockComparison();
+
+    renderAt('/product/sony-wh1000xm5');
+    await screen.findByRole('heading', { name: 'Price history' });
+
+    fireEvent.click(screen.getByRole('button', { name: '7 days' }));
+
+    await waitFor(() =>
+      expect(fetchMock.calls.some((url) => url.includes('/history?period=7d'))).toBe(true),
+    );
+    expect(screen.getByRole('button', { name: '7 days' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('reports an empty history instead of inventing a trend', async () => {
+    mockComparison(comparisonPayload, {
+      ...historyPayload,
+      status: 'no_history',
+      observations: [],
+      summary: {
+        verified: { count: 0, lowest: null, latest: null },
+        sample: { count: 0, lowest: null, latest: null },
+      },
+      notices: ['No stored observation for this product in the last 30 days.'],
+    });
+
+    renderAt('/product/sony-wh1000xm5');
+
+    expect(
+      await screen.findByText(/no stored observation in the last 30 days/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /price observations over/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps demo points out of a chart that has verified observations', async () => {
+    const verifiedObservation = {
+      ...historyObservation,
+      sourceId: 'amazon-in',
+      marketplaceId: 'amazon',
+      isSample: false,
+      source: amazonPending,
+      capturedAt: '2026-11-05T09:55:00.000Z',
+    };
+
+    mockComparison(comparisonPayload, {
+      ...historyPayload,
+      status: 'mixed',
+      observations: [historyObservation, verifiedObservation],
+      summary: {
+        verified: {
+          count: 1,
+          lowest: {
+            price: verifiedObservation.price,
+            capturedAt: verifiedObservation.capturedAt,
+            marketplaceId: 'amazon',
+            sourceId: 'amazon-in',
+          },
+          latest: {
+            price: verifiedObservation.price,
+            capturedAt: verifiedObservation.capturedAt,
+            marketplaceId: 'amazon',
+            sourceId: 'amazon-in',
+          },
+        },
+        sample: {
+          count: 1,
+          lowest: {
+            price: historyObservation.price,
+            capturedAt: historyObservation.capturedAt,
+            marketplaceId: 'amazon',
+            sourceId: 'demo-catalog',
+          },
+          latest: {
+            price: historyObservation.price,
+            capturedAt: historyObservation.capturedAt,
+            marketplaceId: 'amazon',
+            sourceId: 'demo-catalog',
+          },
+        },
+      },
+    });
+
+    renderAt('/product/sony-wh1000xm5');
+
+    expect(await screen.findByText('Verified observations')).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /verified price observations over 30 days/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/excluded from this chart/i)).toBeInTheDocument();
   });
 
   it('switches to the dark theme and remembers the choice', async () => {

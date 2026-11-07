@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 
+import { priceHistoryQuerySchema } from '@smart-shopping/shared';
+
 import { getProductComparison, getSourceCoverage } from '../controllers/comparison.controller.js';
-import { validateParams } from '../middlewares/validate.js';
+import { getProductHistory } from '../controllers/history.controller.js';
+import { validateParams, validateQuery } from '../middlewares/validate.js';
 
 /**
  * Product ids are catalogue slugs. Constraining the shape here keeps malformed
@@ -23,6 +26,13 @@ comparisonRouter.get(
   '/:productId/comparison',
   validateParams(productParamsSchema),
   getProductComparison,
+);
+
+comparisonRouter.get(
+  '/:productId/history',
+  validateParams(productParamsSchema),
+  validateQuery(priceHistoryQuerySchema),
+  getProductHistory,
 );
 
 export const sourcesRouter: Router = Router();

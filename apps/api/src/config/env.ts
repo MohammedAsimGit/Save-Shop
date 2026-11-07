@@ -37,6 +37,16 @@ const rawEnvSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().default('http://localhost:5173'),
   LOG_LEVEL: z.enum(logLevels).default('info'),
   SERVICE_VERSION: z.string().default('0.1.0'),
+  /**
+   * Upper bound for a cached comparison, whatever the source TTLs allow. 0 disables
+   * caching. The effective TTL is always the smallest remaining source freshness.
+   */
+  COMPARISON_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(300),
+  /**
+   * Persisting invented prices in production would look like marketplace history.
+   * Defaults on outside production and off in it; an explicit value always wins.
+   */
+  PERSIST_DEMO_SNAPSHOTS: z.enum(['true', 'false']).optional(),
 });
 
 const envSchema = rawEnvSchema.superRefine((value, ctx) => {
@@ -83,6 +93,8 @@ export type Environment = z.infer<typeof rawEnvSchema> & {
   readonly corsAllowedOrigins: readonly string[];
   /** True when MONGODB_URI is absent: the API runs without a database (dev only). */
   readonly isDatabaseConfigured: boolean;
+  /** Effective policy for storing sample observations; see `PERSIST_DEMO_SNAPSHOTS`. */
+  readonly persistDemoSnapshots: boolean;
 };
 
 /**
@@ -125,6 +137,10 @@ export function parseEnvironment(source: NodeJS.ProcessEnv): Environment {
     ...value,
     corsAllowedOrigins,
     isDatabaseConfigured: Boolean(value.MONGODB_URI),
+    persistDemoSnapshots:
+      value.PERSIST_DEMO_SNAPSHOTS === undefined
+        ? value.NODE_ENV !== 'production'
+        : value.PERSIST_DEMO_SNAPSHOTS === 'true',
   });
 }
 
