@@ -3,30 +3,24 @@ import {
   Camera,
   Check,
   Clock3,
+  Footprints,
   Headphones,
   Info,
   Laptop,
+  ShieldCheck,
   Shirt,
   Smartphone,
   Store,
   Watch,
-  Footprints,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import {
-  availableMarketplaceCount,
-  categoryById,
-  demoProducts,
-  lowestOffer,
-  marketplaceById,
-  rankedOffers,
-  savingsAgainstList,
-} from '@smart-shopping/shared';
+import { availableMarketplaceCount, categoryById, demoProducts } from '@smart-shopping/shared';
 
 import { Button } from '../components/Button';
 import { DemoNotice } from '../components/DemoNotice';
+import { useProductComparison } from '../hooks/useProductComparison';
 import { formatMoney, formatRelativeTime } from '../lib/format';
 import type { RootStackParamList } from '../navigation/types';
 import { fontSizes, radii, spacing, type ThemeColors } from '../theme';
@@ -55,10 +49,18 @@ const iconFor = (key: string): LucideIcon => {
   }
 };
 
-/** Product comparison: cheapest in-stock offer first, stock and time always shown. */
+/**
+ * Product comparison on mobile.
+ *
+ * Product identity comes from the shared catalogue, prices come from the
+ * comparison API. The screen states which source produced each number, when it
+ * was observed, and labels sample data as demo - it never promotes sample prices
+ * to "verified".
+ */
 export function ProductScreen({ route, navigation }: Props) {
   const { colors, isDark } = useAppTheme();
   const styles = buildStyles(colors, isDark);
+  const { state, retry } = useProductComparison(route.params.productId);
 
   const product = demoProducts.find((entry) => entry.id === route.params.productId);
 
@@ -72,13 +74,17 @@ export function ProductScreen({ route, navigation }: Props) {
     );
   }
 
-  const offers = rankedOffers(product);
-  const best = lowestOffer(product);
   const Icon = iconFor(product.icon);
   const category = categoryById(product.category);
-  const savingPercent = Math.round(
-    (savingsAgainstList(product) / product.listPrice.amountMinor) * 100,
-  );
+  const comparison = state.status === 'ready' ? state.comparison : null;
+  const lowest = comparison?.lowest ?? null;
+
+  const lowestLabel =
+    comparison?.status === 'verified'
+      ? 'Lowest verified price'
+      : comparison?.status === 'sample_only'
+        ? 'Lowest sample price'
+        : 'Lowest eligible price';
 
   return (
     <ScrollView
@@ -98,74 +104,159 @@ export function ProductScreen({ route, navigation }: Props) {
         </Text>
         <Text style={styles.title}>{product.title}</Text>
         <Text style={styles.meta}>
-          ★ {product.rating.toFixed(1)} · {availableMarketplaceCount(product)} marketplaces ·{' '}
-          {savingPercent}% best saving
+          ★ {product.rating.toFixed(1)} · {availableMarketplaceCount(product)} marketplaces
+          {comparison ? ` · ${comparison.offers.length} ranked now` : ''}
         </Text>
       </View>
 
       <View style={styles.priceCard}>
-        <Text style={styles.priceLabel}>Lowest in-stock price</Text>
-        {best ? (
+        {state.status === 'loading' && (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={styles.loadingText}>Loading comparison…</Text>
+          </View>
+        )}
+
+        {state.status === 'error' && (
+          <View style={styles.errorBlock}>
+            <Text style={styles.priceLabel}>Comparison unavailable</Text>
+            <Text style={styles.errorText}>{state.message}</Text>
+            {state.isNetworkError ? (
+              <Text style={styles.hint}>
+                Check EXPO_PUBLIC_API_BASE_URL and that the API is running.
+              </Text>
+            ) : null}
+            <Button label="Retry" onPress={retry} />
+            <Text style={styles.hint}>
+              No fallback prices: a comparison must come from the comparison engine.
+            </Text>
+          </View>
+        )}
+
+        {comparison && (
           <>
-            <Text style={styles.price}>{formatMoney(best.price)}</Text>
-            <Text style={styles.priceMeta}>
-              {marketplaceById(best.marketplaceId)?.name} · observed{' '}
-              {formatRelativeTime(best.observedAt)}
+            <Text style={styles.priceLabel}>{lowestLabel}</Text>
+            {lowest ? (
+              <>
+                <Text style={styles.price}>{formatMoney(lowest.price)}</Text>
+                <Text style={styles.priceMeta}>
+                  {lowest.source.verification === 'sample' ? 'DEMO · ' : ''}
+                  {lowest.source.displayName} · observed {formatRelativeTime(lowest.capturedAt)}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.unavailable}>Currently unavailable</Text>
+            )}
+            <Button label="Track price" disabled block onPress={() => undefined} />
+            <Text style={styles.hint}>
+              Alerts stay disabled until a source permits them and accounts exist.
             </Text>
           </>
-        ) : (
-          <Text style={styles.unavailable}>Currently unavailable</Text>
         )}
-        <Button label="Track price" disabled block onPress={() => undefined} />
-        <Text style={styles.hint}>
-          Tracking needs an account, and authentication is not implemented in this build.
-        </Text>
       </View>
 
       <Text style={styles.sectionTitle}>Marketplace comparison</Text>
-      <View style={styles.offers}>
-        {offers.map((offer) => {
-          const marketplace = marketplaceById(offer.marketplaceId);
-          const isLowest = offer.marketplaceId === best?.marketplaceId;
 
-          return (
-            <View key={offer.marketplaceId} style={[styles.offer, isLowest && styles.offerLowest]}>
+      {state.status === 'loading' && <Text style={styles.loadingText}>Loading offers…</Text>}
+
+      {state.status === 'error' && (
+        <View style={styles.noticeCard}>
+          <Text style={styles.noticeText}>
+            Offers cannot be shown while the comparison API is unreachable.
+          </Text>
+        </View>
+      )}
+
+      {comparison && (
+        <>
+          <View style={styles.offers}>
+            {comparison.offers.length === 0 && (
+              <View style={styles.noticeCard}>
+                <Text style={styles.noticeText}>
+                  No eligible observation: every offer was stale, out of stock, or from a source
+                  without permission.
+                </Text>
+              </View>
+            )}
+
+            {comparison.offers.map((offer) => (
               <View
-                style={[
-                  styles.offerTile,
-                  { backgroundColor: marketplace?.accent ?? colors.primary },
-                ]}
+                key={`${offer.marketplaceId}-${offer.capturedAt}`}
+                style={[styles.offer, offer.isLowest && styles.offerLowest]}
+                accessibilityLabel={`${offer.marketplaceId} ${formatMoney(offer.price)}${
+                  offer.isLowest ? ', lowest' : ''
+                }`}
               >
-                <Text style={styles.offerInitial}>{marketplace?.short ?? '?'}</Text>
-              </View>
-
-              <View style={styles.offerCopy}>
-                <View style={styles.offerTitleRow}>
-                  <Text style={styles.offerName} numberOfLines={1}>
-                    {marketplace?.name}
+                <View style={styles.offerCopy}>
+                  <View style={styles.offerTitleRow}>
+                    <Text style={styles.offerName} numberOfLines={1}>
+                      {offer.marketplaceId}
+                    </Text>
+                    {offer.isLowest ? (
+                      <View style={styles.lowestBadge}>
+                        <Text style={styles.lowestText}>LOWEST</Text>
+                      </View>
+                    ) : null}
+                    {offer.source.verification === 'sample' ? (
+                      <View style={styles.demoBadge}>
+                        <Text style={styles.demoText}>DEMO</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={styles.offerMetaRow}>
+                    <Clock3 size={10} color={colors.textSubtle} />
+                    <Text style={styles.offerMeta} numberOfLines={1}>
+                      {formatRelativeTime(offer.capturedAt)} · {offer.source.displayName}
+                    </Text>
+                  </View>
+                  <Text style={styles.offerAttribution} numberOfLines={1}>
+                    {offer.attribution.label}
                   </Text>
-                  {isLowest ? (
-                    <View style={styles.lowestBadge}>
-                      <Text style={styles.lowestText}>LOWEST</Text>
-                    </View>
-                  ) : null}
                 </View>
-                <View style={styles.offerMetaRow}>
-                  <Clock3 size={10} color={colors.textSubtle} />
-                  <Text style={styles.offerMeta}>
-                    {formatRelativeTime(offer.observedAt)}
-                    {offer.inStock ? '' : ' · out of stock'}
-                  </Text>
-                </View>
-              </View>
 
-              <Text style={[styles.offerPrice, isLowest && styles.offerPriceLowest]}>
-                {formatMoney(offer.price)}
+                <Text style={[styles.offerPrice, offer.isLowest && styles.offerPriceLowest]}>
+                  {formatMoney(offer.price)}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          {comparison.excluded.length > 0 && (
+            <Text style={styles.excluded}>
+              Not ranked: {comparison.excluded.length}{' '}
+              {comparison.excluded.length === 1 ? 'observation' : 'observations'} (stale, out of
+              stock, wrong currency or invalid)
+            </Text>
+          )}
+
+          <View style={styles.coverageCard}>
+            <Text style={styles.coverageTitle}>Source coverage</Text>
+            {comparison.sources.map((source) => (
+              <View key={source.id} style={styles.coverageRow}>
+                <Text style={styles.coverageName} numberOfLines={1}>
+                  {source.displayName}
+                </Text>
+                <Text style={[styles.coverageStatus, source.enabled && styles.coverageEnabled]}>
+                  {source.enabled ? 'Enabled' : 'Pending permission'}
+                </Text>
+              </View>
+            ))}
+            {comparison.notices.map((notice) => (
+              <Text key={notice} style={styles.coverageNotice}>
+                {notice}
               </Text>
-            </View>
-          );
-        })}
-      </View>
+            ))}
+          </View>
+
+          <View style={styles.note}>
+            <ShieldCheck size={13} color={colors.textSubtle} />
+            <Text style={styles.noteText}>
+              Every price carries its source and observation time. Verified means an authorised
+              source, not a cheaper number.
+            </Text>
+          </View>
+        </>
+      )}
 
       <View style={styles.note}>
         <Info size={13} color={colors.textSubtle} />
@@ -187,7 +278,8 @@ export function ProductScreen({ route, navigation }: Props) {
       <View style={styles.historyCard}>
         <Text style={styles.historyTitle}>Price history is not available yet</Text>
         <Text style={styles.historyBody}>
-          A trend chart needs real observation snapshots. This build stores none, so it shows none.
+          A trend chart needs stored observations from an authorised source. This sprint ranks
+          snapshots; it keeps no history.
         </Text>
       </View>
 
@@ -239,6 +331,10 @@ const buildStyles = (colors: ThemeColors, isDark: boolean) =>
     price: { fontSize: 34, fontWeight: '800', letterSpacing: -1, color: colors.primary },
     priceMeta: { fontSize: fontSizes.xs, color: colors.textMuted },
     unavailable: { fontSize: fontSizes.md, fontWeight: '700', color: colors.textMuted },
+    loadingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    loadingText: { fontSize: fontSizes.sm, color: colors.textMuted },
+    errorBlock: { gap: spacing.sm },
+    errorText: { fontSize: fontSizes.sm, color: colors.danger },
     hint: { fontSize: 10, color: colors.textSubtle, lineHeight: 15 },
     sectionTitle: { fontSize: fontSizes.md, fontWeight: '700', color: colors.text },
     offers: { gap: spacing.sm },
@@ -253,14 +349,6 @@ const buildStyles = (colors: ThemeColors, isDark: boolean) =>
       backgroundColor: colors.surface,
     },
     offerLowest: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-    offerTile: {
-      width: 36,
-      height: 36,
-      borderRadius: radii.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    offerInitial: { color: '#ffffff', fontWeight: '700', fontSize: fontSizes.sm },
     offerCopy: { flex: 1, gap: 2 },
     offerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     offerName: { fontSize: fontSizes.sm, fontWeight: '600', color: colors.text, flexShrink: 1 },
@@ -271,10 +359,40 @@ const buildStyles = (colors: ThemeColors, isDark: boolean) =>
       backgroundColor: colors.primary,
     },
     lowestText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.6, color: colors.onPrimary },
+    demoBadge: {
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radii.pill,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    demoText: { fontSize: 8, fontWeight: '800', letterSpacing: 0.6, color: colors.textSubtle },
     offerMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    offerMeta: { fontSize: 10, color: colors.textMuted },
+    offerMeta: { fontSize: 10, color: colors.textMuted, flexShrink: 1 },
+    offerAttribution: { fontSize: 9, color: colors.textSubtle },
     offerPrice: { fontSize: fontSizes.md, fontWeight: '700', color: colors.text },
     offerPriceLowest: { color: colors.primary },
+    excluded: { fontSize: 10, color: colors.textSubtle, lineHeight: 15 },
+    coverageCard: {
+      gap: 6,
+      padding: spacing.md,
+      borderRadius: radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    coverageTitle: { fontSize: fontSizes.sm, fontWeight: '700', color: colors.text },
+    coverageRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    coverageName: { fontSize: 11, color: colors.textMuted, flexShrink: 1 },
+    coverageStatus: { fontSize: 10, fontWeight: '700', color: colors.textSubtle },
+    coverageEnabled: { color: colors.success },
+    coverageNotice: { fontSize: 9, color: colors.textSubtle, lineHeight: 14 },
+    noticeCard: {
+      padding: spacing.md,
+      borderRadius: radii.md,
+      backgroundColor: colors.surfaceMuted,
+    },
+    noticeText: { fontSize: 11, lineHeight: 16, color: colors.textMuted },
     note: {
       flexDirection: 'row',
       alignItems: 'flex-start',

@@ -3,14 +3,15 @@
 Price intelligence for shoppers who compare the same product across competing marketplaces: search
 once, see every marketplace's price side by side, and follow the cheapest **verified** offer.
 
-> **Status: Sprint 1 (premium UI, frontend only).** Three applications boot, a real health endpoint
-> reports dependency state honestly, and both clients now ship the full interface: home, search and
-> filtering, product comparison, price tracking, premium, profile and sign-in. Catalogue and prices
-> are an explicitly labelled **sample** dataset; there is no marketplace integration,
-> authentication, advertising or billing, and deal buttons are disabled because no outbound
-> affiliate link exists. Nothing here fabricates a live price or claims access we do not have.
+> **Status: Sprint 2 (price comparison engine, no live marketplace).** A source-independent
+> comparison engine now ranks price snapshots behind two API endpoints, and both clients render what
+> it returns: lowest eligible offer, marketplace, observation time, source attribution, freshness and
+> a DEMO badge. The only enabled source is a deterministic sample adapter, so every price you see is
+> invented and labelled as such; Amazon and Flipkart exist only as disabled descriptors awaiting
+> written permission. There is no scraper, no marketplace integration, no authentication, no
+> advertising, no billing, and deal buttons are disabled because no outbound link is authorised.
 >
-> What shipped: [Sprint 1 report](docs/SPRINT_1_REPORT.md).
+> What shipped: [Sprint 2 report](docs/SPRINT_2_REPORT.md) · [Sprint 1 report](docs/SPRINT_1_REPORT.md).
 
 ## Repository layout
 
@@ -63,6 +64,17 @@ npm run dev:mobile # Expo / Metro
 The web page shows the live API health state, so it doubles as a smoke test of the whole stack.
 `MONGODB_URI` may stay empty; health then reports `database.status = "not_configured"` instead of
 pretending the database is up.
+
+A product page then exercises the comparison engine end to end:
+
+```bash
+curl -s localhost:4000/api/v1/products/sony-wh1000xm5/comparison   # ranked offers + exclusions
+curl -s localhost:4000/api/v1/sources                              # which sources exist, and why not
+```
+
+Both answers carry `status: "sample_only"` and a demo notice, because the demo adapter is the only
+enabled source. Web keeps the API base URL in `apps/web/.env.local`
+(`VITE_API_BASE_URL=http://localhost:4100/api/v1` for the current local setup).
 
 Full environment guide: [docs/ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md).
 
@@ -121,18 +133,22 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md)                         | Delivered foundation vs. planned product requirements   |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md)                         | Layer boundaries, request lifecycle, decisions          |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md)                 | Where every kind of file belongs                        |
-| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, error codes, health endpoint                  |
+| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, error codes, health, comparison, sources      |
 | [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Planned collections, indexing, price snapshots          |
 | [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints |
 | [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup        |
 | [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                    |
+| [SPRINT_2_REPORT.md](docs/SPRINT_2_REPORT.md)                   | Sprint 2 engine, adapters, endpoints, gates, limits     |
 | [SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md)                   | Sprint 1 screens, components, gates, known issues       |
 | [INGESTION_FEASIBILITY.md](docs/INGESTION_FEASIBILITY.md)       | Amazon/Flipkart data access, provider costs, GO / NO-GO |
 
 ## Known constraints
 
 - **Marketplace access is unresolved.** Ingestion depends on authorised APIs or written permission
-  per provider; until that exists there is no scraper and no mock data standing in for it. See
+  per provider; until that exists there is no scraper and no mock data standing in for it. The
+  comparison engine is therefore exercised by a clearly labelled demo adapter. See
   [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md).
+- **Product identity is still catalogue-owned.** Offers come from adapters, but the product list is
+  the shared demo catalogue; there is no catalogue ingestion or price history store yet.
 - **Authentication is not implemented.** Firebase is the intended provider; no credentials exist.
 - **No CI/CD, Docker or deployment** in this sprint.

@@ -111,8 +111,9 @@ export function RootLayout() {
             SaveShop - price intelligence across marketplaces
           </p>
           <p>
-            Sprint 1 interface preview. Catalogue and prices are sample data; marketplace
-            integrations, accounts, advertising and billing are not implemented.
+            Sprint 2 preview. Prices come from the comparison API and every enabled source is
+            labelled demo data; marketplace integrations, accounts, advertising and billing are not
+            implemented.
           </p>
           <p className="text-ink-subtle">
             No outbound affiliate links exist yet, so deal buttons are intentionally inert.

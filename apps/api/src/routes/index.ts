@@ -1,17 +1,20 @@
 import { Router } from 'express';
 
+import { comparisonRouter, sourcesRouter } from './comparison.routes.js';
 import { healthRouter } from './health.routes.js';
 
 /**
  * API surface for a single version.
  *
- * Future feature routers (products, marketplaces, wishlists, ...) are mounted
- * here; the version prefix itself is applied once in app.ts.
+ * Future feature routers (marketplaces, wishlists, ...) are mounted here; the
+ * version prefix itself is applied once in app.ts.
  */
 export function createApiRouter(): Router {
   const router = Router();
 
   router.use('/health', healthRouter);
+  router.use('/products', comparisonRouter);
+  router.use('/sources', sourcesRouter);
 
   return router;
 }
