@@ -3,21 +3,21 @@
 Price intelligence for shoppers who compare the same product across competing marketplaces: search
 once, see every marketplace's price side by side, and follow the cheapest **verified** offer.
 
-> **Status: Sprint 4 (historical retention, compaction and daily rollups).**
-> Observations are stored in MongoDB (`price_snapshots`), served through a validated history
-> endpoint, and charted on the product page of both clients. Sprint 4 adds a manual retention job
-> that compacts days older than the raw window into daily aggregates (`price_daily_rollups`) — but
-> only after the rollup has been persisted **and verified** — plus an audit trail of every run
-> (`retention_runs`). Recent days stay at full resolution; archived days are shown as daily
-> summaries, never as point-in-time prices. The only enabled source is still a deterministic sample
-> adapter, so every price and every history point you see is invented demo data and labelled as
-> such; Amazon and Flipkart remain disabled descriptors awaiting written permission. There is no
-> scraper, no marketplace integration, no authentication, no advertising, no billing, and deal
-> buttons stay disabled because no outbound link is authorised.
+> **Status: Sprint 5 (canonical product catalogue and identity engine).**
+> Observations are stored in MongoDB (`price_snapshots`), compacted into daily aggregates
+> (`price_daily_rollups`), and served through validated history and comparison endpoints. Sprint 5
+> makes the platform catalogue the authority for product identity: `canonical_products` holds one
+> record per product, `marketplace_listings` holds what a source says its item is, and a
+> deterministic matcher decides whether the two are the same thing. Only `exact` and `strong`
+> matches are compared; `possible`, `unmatched` and `conflict` verdicts stay unresolved. The only
+> enabled source is still a deterministic sample adapter, so every price and every history point is
+> invented demo data and labelled as such; Amazon and Flipkart remain disabled descriptors awaiting
+> written permission. There is no scraper, no marketplace catalogue feed, no authentication, no
+> advertising, no billing, and deal buttons stay disabled because no outbound link is authorised.
 >
-> What shipped: [Sprint 4 report](docs/SPRINT_4_REPORT.md) ·
-> [Sprint 3 report](docs/SPRINT_3_REPORT.md) · [Sprint 2 report](docs/SPRINT_2_REPORT.md) ·
-> [Sprint 1 report](docs/SPRINT_1_REPORT.md).
+> What shipped: [Sprint 5 report](docs/SPRINT_5_REPORT.md) ·
+> [Sprint 4 report](docs/SPRINT_4_REPORT.md) · [Sprint 3 report](docs/SPRINT_3_REPORT.md) ·
+> [Sprint 2 report](docs/SPRINT_2_REPORT.md) · [Sprint 1 report](docs/SPRINT_1_REPORT.md).
 
 ## Repository layout
 
@@ -105,6 +105,7 @@ Run from the repository root.
 | `npm run test`         | Build shared, then run every workspace's tests     |
 | `npm run verify`       | typecheck + lint + test — the pre-push gate        |
 | `npm run retention`    | Compaction job (dry run by default; needs MongoDB) |
+| `npm run catalogue`    | Catalogue ingestion CLI (dry run optional; needs MongoDB) |
 
 Tests: Vitest for `shared`, `api` and `web`; `jest-expo` for `mobile`.
 
@@ -127,6 +128,29 @@ durable data to compact) and refuses to start while another run is active in the
 
 Exit codes: `0` completed (including a dry run), `1` failure, `2` usage/environment error, `3`
 completed after an interrupt. Each run is recorded in `retention_runs`.
+
+### Product catalogue (Sprint 5)
+
+Product identity comes from the platform catalogue, not from marketplace titles.
+
+```bash
+npm run catalogue -- seed-demo                # migrate the sample catalogue (idempotent)
+npm run catalogue -- seed-demo --dry-run      # validate and match, write nothing
+npm run catalogue -- ingest --file=catalogue.json
+```
+
+The JSON file shape is `{ "products": [...], "listings": [...] }`. Products are canonical records
+(id, name, brand, category, optional model/mpn/gtin, specifications, variants); listings are what a
+source reports (marketplace id, external id, title, URL, optional identifiers). Every record is
+validated, invalid records are reported with a reason, and re-running the same file changes nothing.
+
+Matching is deterministic, in this order: canonical id from a trusted catalogue source → GTIN →
+manufacturer part number → brand + model → brand + model + variant attributes → brand + title
+similarity (unresolved, for review). Different GTINs, MPNs, models, generations, storage capacities,
+colours or accessories produce a `conflict` instead of a match. Confidence is a strength score from
+that table, never a probability. There is **no public ingestion endpoint**: the project has no admin
+authentication yet, so ingestion is a local CLI operation. See
+[API_CONTRACTS.md](docs/API_CONTRACTS.md#10-catalogue-ingestion--deliberately-not-an-http-endpoint).
 
 ### If `npm run` hangs on Windows
 
@@ -164,11 +188,12 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md)                         | Delivered foundation vs. planned product requirements   |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md)                         | Layer boundaries, request lifecycle, decisions          |
 | [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md)                 | Where every kind of file belongs                        |
-| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, errors, health, comparison, history, sources  |
-| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Snapshot, cache, rollup and retention schemas + indexes |
+| [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, errors, comparison, history, catalogue, sources |
+| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Catalogue, snapshot, cache, rollup and retention schemas |
 | [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints |
 | [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup        |
 | [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                    |
+| [SPRINT_5_REPORT.md](docs/SPRINT_5_REPORT.md)                   | Sprint 5 catalogue, identity matching, ingestion, gates |
 | [SPRINT_4_REPORT.md](docs/SPRINT_4_REPORT.md)                   | Sprint 4 retention policy, rollups, job, gates, limits  |
 | [SPRINT_3_REPORT.md](docs/SPRINT_3_REPORT.md)                   | Sprint 3 persistence, history API, cache, gates, limits |
 | [SPRINT_2_REPORT.md](docs/SPRINT_2_REPORT.md)                   | Sprint 2 engine, adapters, endpoints, gates, limits     |
@@ -181,8 +206,11 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
   per provider; until that exists there is no scraper and no mock data standing in for it. The
   comparison engine is therefore exercised by a clearly labelled demo adapter. See
   [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md).
-- **Product identity is still catalogue-owned.** Offers and history come from adapters, but the
-  product list is the shared demo catalogue; there is no catalogue ingestion yet.
+- **The catalogue is sample data.** Identity now has a real model, matcher and ingestion pipeline,
+  but the only sources are the shared sample catalogue and a local JSON file. No marketplace
+  catalogue feed is connected, so `provenance` is `demo` or `manual` for every record in the app.
+- **Unresolved matches have no review workflow.** `possible`/`conflict` listings are stored and
+  reported but a human cannot resolve them from the UI yet; nothing hidden is silently compared.
 - **History contains demo observations, not marketplace history.** Sample rows are stored only
   outside production, always marked `isSample`, and summarised separately from verified data.
 - **Compaction is a manual job, not a scheduler.** Nothing runs automatically; the policy windows

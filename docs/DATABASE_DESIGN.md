@@ -2,8 +2,11 @@
 
 Status: **partially implemented.** Sprint 0 configured the connection only. Sprint 3 added
 `price_snapshots` (durable price observations) and `comparison_cache` (short-lived response cache).
-Sprint 4 adds `price_daily_rollups` (daily aggregates for compacted days) and `retention_runs` (an
-audit trail for every compaction run). Everything else on this page is still a design, not a schema.
+Sprint 4 added `price_daily_rollups` (daily aggregates for compacted days) and `retention_runs` (an
+audit trail for every compaction run). Sprint 5 adds the catalogue: `canonical_products` (product
+identity), `marketplace_listings` (what a marketplace says its item is) and
+`catalogue_ingestion_runs` (an audit trail for ingestion). Accounts, wishlists and billing are still
+designs, not schemas.
 
 ## 1. Core distinction: product vs variant vs listing
 
@@ -153,26 +156,153 @@ ran it is gone.
 
 Index: `{ startedAt: -1 }` ("what did the last run do?").
 
-## 6. Planned entities (not implemented)
+## 6. Implemented: `canonical_products`
+
+One document = one product the platform says it knows. **This collection is the authority for
+product identity**: prices, history and comparisons reference `id` here, and a marketplace listing may
+only point at it through a recorded match verdict.
+
+| Field                | Type                          | Notes                                                                  |
+| -------------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `id`                 | string (slug, unique)         | Human-readable and stable; the id price/history rows reference          |
+| `name`               | string                        | Canonical display name                                                 |
+| `brand`              | string                        | Brand as recorded, normalized into `search.brandKey`                   |
+| `category`           | string (slug)                 | e.g. `audio`, `phones`; drives category filtering                       |
+| `model`              | string?                       | Manufacturer model number, uppercase                                  |
+| `mpn`                | string?                       | Manufacturer part number, normalized (uppercase alphanumeric)          |
+| `gtin`               | string? (`^\d{14}$`)          | Normalized GTIN-8/12/13/14; GS1 check digit validated before storage    |
+| `description`        | string?                       | Only when supplied; never generated                                   |
+| `specifications`     | object                        | Free-form key/value facts that were actually supplied                  |
+| `color`              | string?                       | Variant attribute when known                                          |
+| `storageCapacity`    | string?                       | Normalized (`128gb`, `1tb`); part of variant identity                  |
+| `variantOf`          | string \| null                | Base product id for a variant record, so variants stay distinct        |
+| `variantAttributes`  | object                        | e.g. `{ color: 'blue', storage: '128gb' }`                             |
+| `imageUrls`          | string[]                      | Only real URLs; elements must be http(s)                              |
+| `status`             | enum                          | `active` \| `draft` \| `archived` (archived is not searchable)          |
+| `provenance`         | enum                          | `demo` \| `manual` \| `authorized_source`                              |
+| `isSample`           | boolean                       | True for sample-catalogue records; can never be reported as verified    |
+| `search.text`        | string                        | Denormalized normalized name+brand+model                              |
+| `search.tokens`      | string[]                      | Denormalized name tokens, indexed for candidate lookup                 |
+| `search.brandKey`    | string                        | `normalizeKey(brand)`                                                 |
+| `search.modelKey`    | string \| null                | `normalizeKey(model)`                                                 |
+| `createdAt`/`updatedAt` | Date                       | Timestamps                                                            |
+
+### Indexes
+
+| Index                                                 | Serves                                                     |
+| ----------------------------------------------------- | ---------------------------------------------------------- |
+| `{ id: 1 }` **unique**                                | Product lookup and duplicate prevention                     |
+| `{ gtin: 1 }` **unique, partial** (`gtin` is a string) | A GTIN identifies exactly one product; absent GTINs never collide |
+| `{ 'search.brandKey': 1, 'search.modelKey': 1 }`      | Brand + model matching                                      |
+| `{ 'search.tokens': 1 }`                              | Candidate selection for search and weak matching            |
+| `{ category: 1, status: 1 }`                          | Category-filtered search                                    |
+| `{ variantOf: 1 }`                                    | Listing a base product's variants                           |
+| `{ mpn: 1 }`                                          | MPN lookup (not unique: manufacturers reuse part numbers)   |
+
+### Writing rules
+
+- Ingestion is **insert-only** for products (`$setOnInsert`): a rerun never overwrites a curated
+  record. Correcting a product is an explicit operation, not a side effect of ingestion.
+- Identifiers are optional and stored only when supplied. An invalid GTIN (bad check digit) is
+  rejected, never repaired.
+- `gtin` is normalized to 14 digits (leading zero padding) so EAN-13 and GTIN-14 forms of the same
+  code compare equal.
+
+## 7. Implemented: `marketplace_listings`
+
+One document = one item as a source reported it, on one marketplace. A listing **never becomes a
+canonical product on its own**; it carries a match verdict and may resolve only to an existing id.
+
+| Field                                                 | Type                | Notes                                                              |
+| ----------------------------------------------------- | ------------------- | ------------------------------------------------------------------ |
+| `id`                                                  | string (sha256/40)  | `sha256(sourceId\|marketplaceId\|externalId)`, deterministic        |
+| `canonicalProductId`                                  | string \| null      | Set only for `exact`/`strong` matches                              |
+| `sourceId`                                            | string              | Registered catalogue source                                        |
+| `marketplaceId`                                       | string              | Marketplace the item is on                                         |
+| `externalId`                                          | string              | The marketplace's own identifier, as supplied                      |
+| `title`                                               | string              | Source title, preserved verbatim for audit/review                  |
+| `url`                                                 | string (http(s))    | As supplied; never fabricated                                     |
+| `brand`, `model`, `mpn`, `gtin`                       | strings?            | Normalized copies of what the source supplied                      |
+| `specifications`                                      | object              | As supplied                                                       |
+| `imageUrl`                                            | string?             | As supplied                                                       |
+| `color`, `storageCapacity`                            | string?             | Variant hints used by the matcher                                 |
+| `provenance` / `isSample`                             | enum / boolean      | Copied from the source                                            |
+| `match.status`                                        | enum                | `exact` \| `strong` \| `possible` \| `unmatched` \| `conflict`     |
+| `match.method`                                        | enum                | `canonical_id` \| `gtin` \| `mpn` \| `brand_model` \| `brand_model_specs` \| `title_similarity` \| `none` |
+| `match.confidence`                                    | number (0–100)      | Deterministic strength score, **not** a probability                |
+| `match.requiresReview`                                | boolean             | True for `possible` and `conflict`                                |
+| `match.reasons`                                       | string[]            | Why the verdict was reached                                       |
+| `lastObservedAt`                                      | Date                | When the source reported the item                                |
+| `contentHash`                                         | string              | Hash of mutable content; makes "unchanged" measurable             |
+| `createdAt` / `updatedAt`                             | Date                | Timestamps                                                        |
+
+### Indexes
+
+| Index                                                        | Serves                                          |
+| ------------------------------------------------------------ | ----------------------------------------------- |
+| `{ sourceId: 1, marketplaceId: 1, externalId: 1 }` **unique** | Dedupe; one row per item per source per marketplace |
+| `{ canonicalProductId: 1 }`                                   | A product's listings                            |
+| `{ 'match.status': 1 }`                                       | Review queue (possible/conflict)                |
+| `{ gtin: 1 }`                                                 | Identifier-based listing lookup                 |
+
+### Writing rules
+
+- Normal writes upsert by `id`. Unchanged content only advances `lastObservedAt`; changed content
+  updates the record and `updatedAt`. Re-ingesting the same source is idempotent.
+- An unresolved listing (`possible`, `conflict`, or `unmatched`) keeps `canonicalProductId: null`, so
+  it cannot appear in a product's comparison.
+
+## 8. Implemented: `catalogue_ingestion_runs`
+
+One document per ingestion run: `startedAt`, `finishedAt`, `dryRun`, `status`, `sources[]`,
+`recordsRead`, `accepted`, `rejected`, `created`, `updated`, `unchanged`,
+`canonicalProductsInserted`, `matches` (per verdict), `rejectedRecords[]` (source, index, externalId,
+reason) and `warnings[]`. Index: `{ startedAt: -1 }`.
+
+## 9. Identity matching rules
+
+Matching is deterministic and lives in one service (`apps/api/src/services/catalogue/matching.service.ts`).
+Priority order:
+
+| Tier | Rule                                             | Verdict   | Confidence |
+| ---- | ------------------------------------------------ | --------- | ---------- |
+| 0    | Canonical id supplied by a trusted catalogue source | `exact`   | 100        |
+| 1    | GTIN/EAN/UPC equal (both normalized)             | `exact`   | 100        |
+| 2    | Manufacturer part number equal                   | `strong`  | 95         |
+| 3    | Brand + model equal                              | `strong`  | 90         |
+| 4    | Brand + model + variant attributes equal         | `strong`  | 92         |
+| 5    | Same brand + title similarity ≥ 0.5              | `possible`| 65–75      |
+| 5    | Title similarity ≥ 0.75 without a brand match    | `possible`| 55–64      |
+
+Hard rules (verdict `conflict`, never attached automatically): different GTINs, different MPNs,
+different explicit models, different product generations inferred from titles (`XM4` vs `XM5`),
+different storage capacities or colours for the same model, an accessory (`case`, `cover`, `cable`,
+`screen protector`, …), and a canonical id that contradicts the listing brand.
+
+Ambiguity rules: two candidate products that match equally strongly produce `possible` with
+`requiresReview: true` and no canonical id; two products claiming the same identifier produce
+`conflict`. Confidence is a **strength score from this table**, not a calibrated probability.
+
+## 10. Planned entities (not implemented)
 
 | Entity               | Key fields                                                                                                      | Notes                                                                    |
 | -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `User`               | `email` (unique), `displayName`, `authProviderId`, `createdAt`                                                  | `authProviderId` is the Firebase UID; no password is ever stored here    |
-| `Product`            | `title`, `brand`, `category`, `imageUrls[]`, `identifiers{gtin?,mpn?}`                                          | canonical record                                                         |
-| `ProductVariant`     | `productId`, `title`, `attributes{}`, `identifiers{gtin?,mpn?}`                                                 | unique per `productId + attribute hash`                                  |
 | `Marketplace`        | `slug` (unique), `displayName`, `isActive`                                                                      | seeded manually once access is approved; slugs must be real, not guessed |
-| `ProductListing`     | `productId`, `variantId?`, `marketplaceId`, `externalId`, `url`, `sellerName?`, `availability`, `lastCheckedAt` | unique on `marketplaceId + externalId`                                   |
 | `Wishlist`           | `userId`, `productId`, `variantId?`, `targetPrice?`                                                             | unique on `userId + productId + variantId`                               |
 | `Subscription`       | `userId`, `tier`, `status`, `currentPeriodEnd`                                                                  | one active per user                                                      |
 | `AffiliateClick`     | `userId?`, `listingId`, `marketplaceId`, `occurredAt`, `campaignId?`                                            | for commission attribution                                               |
 | `AdvertisementEvent` | `slot`, `campaignId`, `eventType` (`impression`/`click`), `occurredAt`                                          | no personal data beyond a pseudonymous id                                |
 
-Planned indexes: `User.email` unique, `Marketplace.slug` unique, `ProductListing`
-`(marketplaceId, externalId)` unique plus `(productId, marketplaceId)`, `Product` text index on
-`title` plus `identifiers.gtin`, `Wishlist` unique `(userId, productId, variantId)`,
-`AffiliateClick` `(listingId, occurredAt)` and `(userId, occurredAt)`.
+Canonical products and marketplace listings are no longer planned: they are implemented in §6 and
+§7. Product variants are represented by `variantOf` + `variantAttributes` on the canonical record
+rather than a separate collection.
 
-## 7. Data ownership and access
+Planned indexes: `User.email` unique, `Marketplace.slug` unique, `Wishlist` unique
+`(userId, productId, variantId)`, `AffiliateClick` `(listingId, occurredAt)` and
+`(userId, occurredAt)`.
+
+## 11. Data ownership and access
 
 - Every client request will be scoped to the authenticated user; user-owned documents
   (`Wishlist`, `Subscription`) filtered by `userId` from the verified token, never from a
@@ -182,7 +312,7 @@ Planned indexes: `User.email` unique, `Marketplace.slug` unique, `ProductListing
   is a read.
 - `AffiliateClick` and `AdvertisementEvent` will be written by the server; users can never edit them.
 
-## 8. Data retention
+## 12. Data retention
 
 Implemented policy (Sprint 4). The windows are **product decisions, not legal requirements**: no
 regulator mandates a retention period for this data, so the defaults are configurable and documented
@@ -215,7 +345,7 @@ A day's raw observations are deleted only after:
 A day that fails verification or errors is skipped and reported in `failedDays`; nothing is deleted
 for it. `retention_runs` records every attempt, and the job defaults to a **dry run**.
 
-## 9. Duplicate-product risk
+## 13. Duplicate-product risk
 
 The same physical product will appear under different titles, bundles and identifiers across
 marketplaces. Risks:
@@ -223,19 +353,25 @@ marketplaces. Risks:
 1. **False merge** — two different products treated as one, showing a wrong "cheapest" price.
 2. **Duplicate split** — the same product stored twice, splitting price history and hurting UX.
 
-Mitigation plan: match on exact `gtin` first, then `mpn` + brand, then normalised title similarity as
-a _review candidate_ only. An ambiguous match must never silently redirect a shopper to the wrong
-item; a confidence threshold plus an admin review path is required before real ingestion.
+Mitigation (Sprint 5): the identity engine matches on exact GTIN, then MPN, then brand + model, then
+brand + model + variant, and uses normalized title similarity **only** as a `possible` match that
+stays unresolved. Conflicting identifiers, different generations and accessories are rejected
+(`conflict`). An ambiguous match never redirects a shopper: it has no canonical id, so it cannot be
+compared. What is still missing is a human review workflow for the `possible`/`conflict` queue.
 
-## 10. Money handling
+## 14. Money handling
 
 `{ amountMinor: integer, currency: ISO-4217 }` everywhere. No floats, no strings-with-symbols.
 Currency conversion is out of scope; comparisons only happen within one currency, and history
 excludes prices in another currency instead of converting them.
 
-## 11. Explicit non-goals for Sprint 4
+## 15. Explicit non-goals for Sprint 5
 
-- No product/listing/user collections: identity is still the shared demo catalogue.
-- No scheduler, queue or distributed job runner: compaction is a manual CLI run.
+- No user, account or wishlist collections.
+- No marketplace catalogue feed: the only sources are the sample catalogue and a local operator
+  file. Amazon India and Flipkart remain permission-gated.
+- No review UI or admin authorisation: unresolved listings are recorded and reported, not resolved
+  by a person yet.
+- No scheduler, queue or distributed job runner: compaction and ingestion are manual CLI runs.
 - No rollup below daily granularity, and no rollup for a day with no observations.
 - No marketplace identifiers invented; no real provider writes to these collections.

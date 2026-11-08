@@ -1,7 +1,6 @@
 import {
   HISTORY_MAX_ROLLUP_DAYS,
   HISTORY_PERIOD_DAYS,
-  demoProducts,
   offerSnapshotSchema,
   type HistoryGroupSummary,
   type HistoryObservation,
@@ -15,6 +14,7 @@ import {
 
 import { logger } from '../config/logger.js';
 import { AppError } from '../utils/AppError.js';
+import { resolveProductIdentity } from './catalogue/productIdentity.js';
 import {
   rollupStore as sharedRollupStore,
   type RollupRecord,
@@ -152,7 +152,9 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
 
   return {
     async getHistory(productId: string, query: PriceHistoryQuery): Promise<PriceHistoryResponse> {
-      const product = demoProducts.find((entry) => entry.id === productId);
+      // Identity comes from the canonical catalogue, with the documented demo
+      // fallback for products that only exist in the sample data.
+      const product = await resolveProductIdentity(productId);
       if (!product) {
         throw AppError.notFound(`Unknown product: ${productId}`);
       }

@@ -94,6 +94,63 @@ export {
 } from './contracts/rollups.js';
 export type { RollupAvailability, DailyRollup, HistoryRollup } from './contracts/rollups.js';
 
+// Canonical catalogue and product identity (Sprint 5).
+export {
+  catalogueStatusSchema,
+  catalogueProvenanceSchema,
+  catalogueCategorySchema,
+  catalogueProductIdSchema,
+  gtinSchema,
+  mpnSchema,
+  modelSchema,
+  specificationsSchema,
+  variantAttributesSchema,
+  canonicalProductSchema,
+  matchStatusSchema,
+  matchMethodSchema,
+  listingMatchSchema,
+  marketplaceListingSchema,
+  listingSummarySchema,
+  catalogueSearchQuerySchema,
+  catalogueSearchResponseSchema,
+  catalogueProductResponseSchema,
+  productListingsResponseSchema,
+  MAX_LISTINGS_PER_PRODUCT,
+} from './contracts/catalogue.js';
+export type {
+  CatalogueStatus,
+  CatalogueProvenance,
+  CanonicalProduct,
+  MatchStatus,
+  MatchMethod,
+  ListingMatch,
+  MarketplaceListing,
+  ListingSummary,
+  CatalogueSearchQuery,
+  CatalogueSearchResponse,
+  CatalogueProductResponse,
+  ProductListingsResponse,
+} from './contracts/catalogue.js';
+
+// Deterministic identity normalization, shared by ingestion, matching and search.
+export {
+  normalizeText,
+  normalizeKey,
+  tokenizeText,
+  gtinCheckDigit,
+  normalizeGtin,
+  isValidGtin,
+  normalizeCapacity,
+  normalizeColor,
+  extractGenerationTokens,
+  hasGenerationConflict,
+  detectAccessory,
+  extractVariantHints,
+  titleSimilarity,
+  normalizeMpn,
+} from './catalogue/normalize.js';
+export type { VariantHints } from './catalogue/normalize.js';
+
 export {
   palette,
   themes,

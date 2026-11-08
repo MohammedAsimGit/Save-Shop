@@ -6,10 +6,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   categories,
+  demoProducts,
   filterProducts,
   searchProducts,
   sortOptions,
   type CategoryId,
+  type DemoProduct,
   type SortKey,
 } from '@smart-shopping/shared';
 
@@ -17,6 +19,7 @@ import { CategoryChip } from '../components/CategoryChip';
 import { DemoNotice } from '../components/DemoNotice';
 import { ProductCard } from '../components/ProductCard';
 import { SearchBar } from '../components/SearchBar';
+import { useCatalogueSearch } from '../hooks/useCatalogueSearch';
 import type { RootStackParamList, TabParamList } from '../navigation/types';
 import { fontSizes, radii, spacing, type ThemeColors } from '../theme';
 import { useAppTheme } from '../theme/ThemeProvider';
@@ -47,7 +50,20 @@ export function SearchScreen({ route, navigation }: Props) {
     if (route.params?.category !== undefined) setCategory(route.params.category as CategoryId);
   }, [route.params?.query, route.params?.category]);
 
-  const results = useMemo(
+  // The canonical catalogue decides which products exist; the sample catalogue still
+  // supplies the presentation and remains the labelled fallback when the API is down.
+  const catalogue = useCatalogueSearch({
+    ...(query ? { q: query } : {}),
+    ...(category !== 'all' ? { category } : {}),
+    pageSize: 12,
+  });
+
+  const localById = useMemo(
+    () => new Map<string, DemoProduct>(demoProducts.map((product) => [product.id, product])),
+    [],
+  );
+
+  const localResults = useMemo(
     () =>
       filterProducts(searchProducts(query), {
         query,
@@ -58,6 +74,27 @@ export function SearchScreen({ route, navigation }: Props) {
       }),
     [query, category, sort, inStockOnly, route.params?.marketplace],
   );
+
+  const canonicalProducts =
+    catalogue.state.status === 'ready' ? catalogue.state.result.products : null;
+
+  const results = useMemo(() => {
+    if (!canonicalProducts) return localResults;
+    const allowed = new Set(localResults.map((product) => product.id));
+    return canonicalProducts
+      .filter((product) => allowed.has(product.id))
+      .map((product) => localById.get(product.id))
+      .filter((product): product is DemoProduct => product !== undefined);
+  }, [canonicalProducts, localResults, localById]);
+
+  // Canonical products with no sample price are listed without a price, never priced
+  // from a similar item; offer-based filters hide them because they have no offers.
+  const catalogueOnly =
+    canonicalProducts &&
+    (route.params?.marketplace ?? 'all') === 'all' &&
+    !inStockOnly
+      ? canonicalProducts.filter((product) => !localById.has(product.id))
+      : [];
 
   return (
     <ScrollView
@@ -117,10 +154,19 @@ export function SearchScreen({ route, navigation }: Props) {
       </View>
 
       <Text style={styles.count}>
-        {results.length} {results.length === 1 ? 'product' : 'products'} · sample data
+        {results.length + catalogueOnly.length}{' '}
+        {results.length + catalogueOnly.length === 1 ? 'product' : 'products'} ·{' '}
+        {canonicalProducts ? 'canonical catalogue' : 'local sample catalogue'} · sample prices
       </Text>
 
-      {results.length === 0 ? (
+      {catalogue.state.status === 'error' && (
+        <Text style={styles.count}>
+          The canonical catalogue could not be reached, so the local sample catalogue is shown
+          instead.
+        </Text>
+      )}
+
+      {results.length + catalogueOnly.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>No products match those filters</Text>
           <Text style={styles.emptyBody}>
@@ -148,6 +194,19 @@ export function SearchScreen({ route, navigation }: Props) {
                 product={product}
                 onPress={(productId) => rootNavigation.navigate('Product', { productId })}
               />
+            </View>
+          ))}
+          {catalogueOnly.map((product) => (
+            <View key={product.id} style={[styles.gridItem, styles.catalogueCard]}>
+              <Text style={styles.catalogueBrand}>{product.brand}</Text>
+              <Text style={styles.catalogueName}>{product.name}</Text>
+              <Text style={styles.count}>No stored sample price yet</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => rootNavigation.navigate('Product', { productId: product.id })}
+              >
+                <Text style={styles.catalogueLink}>View product</Text>
+              </Pressable>
             </View>
           ))}
         </View>
@@ -184,6 +243,23 @@ const buildStyles = (colors: ThemeColors) =>
     count: { fontSize: fontSizes.xs, color: colors.textSubtle },
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
     gridItem: { width: '48%' },
+    catalogueCard: {
+      gap: spacing.xs,
+      padding: spacing.md,
+      borderRadius: radii.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    catalogueBrand: {
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      color: colors.textSubtle,
+    },
+    catalogueName: { fontSize: fontSizes.sm, fontWeight: '700', color: colors.text },
+    catalogueLink: { fontSize: fontSizes.xs, fontWeight: '700', color: colors.primary },
     empty: {
       alignItems: 'center',
       gap: spacing.sm,

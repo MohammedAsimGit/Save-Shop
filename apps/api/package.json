@@ -11,6 +11,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "retention": "tsx src/scripts/retention.ts",
+    "catalogue": "tsx src/scripts/catalogue.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

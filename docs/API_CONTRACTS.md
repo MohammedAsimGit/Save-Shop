@@ -325,7 +325,141 @@ Field rules:
   `no_history`, and a notice explains the compaction. Rollups in another currency, or from a source
   that is no longer registered, are excluded and counted in `notices` — never converted or merged.
 
-## 7. Other endpoints
+## 7. `GET /api/v1/products`
+
+Canonical catalogue search. Returns **products**, never marketplace listings.
+
+Query parameters (all validated with Zod; unknown values are a `400`):
+
+| Parameter            | Type                    | Default    | Notes                                                    |
+| -------------------- | ----------------------- | ---------- | -------------------------------------------------------- |
+| `q`                  | string (≤ 120)          | –          | Matched against name, brand, model, id and identifiers     |
+| `brand`              | string (≤ 80)           | –          | Exact brand key filter                                    |
+| `category`           | slug                    | –          | e.g. `audio`, `phones`                                    |
+| `model`              | string (≤ 40)           | –          | Reserved; currently reported back in `query`              |
+| `status`             | `active`/`draft`/`archived` | `active` | Archived products are excluded by default             |
+| `page`               | integer 1–500           | `1`        | 1-based                                                    |
+| `pageSize`           | integer 1–48            | `12`       | Maximum page size                                          |
+
+```json
+{
+  "data": {
+    "query": { "q": "sony", "brand": null, "category": null, "model": null },
+    "products": [
+      {
+        "id": "sony-wh1000xm5",
+        "name": "Sony WH-1000XM5 Wireless Headphones",
+        "brand": "Sony",
+        "category": "audio",
+        "specifications": {},
+        "variantOf": null,
+        "variantAttributes": {},
+        "imageUrls": [],
+        "status": "active",
+        "provenance": "demo",
+        "isSample": true,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      }
+    ],
+    "page": 1,
+    "pageSize": 12,
+    "totalItems": 1,
+    "ordering": "relevance",
+    "notices": [
+      "Matches are against canonical product identity (name, brand, model and identifiers), not marketplace titles."
+    ]
+  },
+  "meta": { "page": 1, "pageSize": 12, "totalItems": 1 }
+}
+```
+
+Relevance is deterministic and additive (documented in `catalogue.service.ts`): exact product id 1000,
+GTIN 900, MPN 850, exact brand query 400, model inside the query 350, full-name substring 120, each
+query token present in the name 60, each prefix token 35. Ties are broken by name and then id, so a
+page is always a slice of a stable order. An empty result is a `200` with `products: []`.
+
+## 8. `GET /api/v1/products/:productId`
+
+Canonical product plus a summary of its listing matches. `404 NOT_FOUND` for an unknown or malformed
+`productId` shape (malformed is `400 VALIDATION_ERROR`).
+
+```json
+{
+  "data": {
+    "product": { "id": "sony-wh1000xm5", "name": "Sony WH-1000XM5", "brand": "Sony", "...": "..." },
+    "listingSummary": {
+      "total": 3,
+      "resolved": 3,
+      "unresolved": 0,
+      "requiresReview": 0,
+      "byStatus": { "exact": 3, "strong": 0, "possible": 0, "unmatched": 0, "conflict": 0 }
+    },
+    "notices": [
+      "This is a sample catalogue record: the product identity is demo data, not a verified marketplace catalogue entry."
+    ]
+  }
+}
+```
+
+## 9. `GET /api/v1/products/:productId/listings`
+
+Resolved marketplace listings for one product, oldest listing id order stable by marketplace then
+source (at most 50). Each listing carries the source title, URL, provenance and the full match
+verdict. Storage-only fields (`contentHash`) are never returned.
+
+```json
+{
+  "data": {
+    "productId": "sony-wh1000xm5",
+    "listings": [
+      {
+        "id": "6f1d…",
+        "canonicalProductId": "sony-wh1000xm5",
+        "sourceId": "demo-catalog",
+        "marketplaceId": "amazon",
+        "externalId": "demo:sony-wh1000xm5:amazon",
+        "title": "Sony WH-1000XM5 Wireless Headphones",
+        "url": "https://demo.saveshop.example/product/sony-wh1000xm5",
+        "provenance": "demo",
+        "isSample": true,
+        "match": {
+          "status": "exact",
+          "method": "canonical_id",
+          "confidence": 100,
+          "requiresReview": false,
+          "reasons": ["canonical id supplied by a trusted catalogue source"]
+        },
+        "lastObservedAt": "2026-11-08T07:00:00.000Z",
+        "createdAt": "2026-11-08T07:00:00.000Z",
+        "updatedAt": "2026-11-08T07:00:00.000Z"
+      }
+    ],
+    "listingSummary": { "total": 1, "resolved": 1, "unresolved": 0, "requiresReview": 0, "byStatus": { "exact": 1, "strong": 0, "possible": 0, "unmatched": 0, "conflict": 0 } },
+    "notices": ["A listing is one marketplace's item. Only exact and strong matches are resolved; possible and conflicting matches stay unresolved until reviewed."]
+  }
+}
+```
+
+`match.confidence` is a deterministic strength score (0–100) from the rules in
+[DATABASE_DESIGN.md](DATABASE_DESIGN.md#9-identity-matching-rules). It is **not** a probability and
+no client may present it as one.
+
+## 10. Catalogue ingestion — deliberately not an HTTP endpoint
+
+The project has **no admin authentication**, so there is no public `POST /catalogue/ingest`:
+an unauthenticated write endpoint that creates product identity would be a security hole. Ingestion
+runs locally through the CLI instead:
+
+```bash
+npm run catalogue -- seed-demo [--dry-run]
+npm run catalogue -- ingest --file=catalogue.json [--dry-run]
+```
+
+A future authorised provider gets an adapter behind the same service, and the endpoint question is
+revisited only once admin authorisation exists.
+
+## 11. Other endpoints
 
 **`GET /`** — discovery document (`{ data: { name, version, apiPrefix } }`). Useful for humans.
 
@@ -335,18 +469,18 @@ Field rules:
 `access-control-allow-origin` header. Requests without an `Origin` header (curl, server-to-server,
 native apps) are allowed.
 
-## 8. Planned endpoints (NOT implemented)
+## 12. Planned endpoints (NOT implemented)
 
 Listed only so the contract can be designed coherently later. Definitions, field names and status
 codes are not final and must not be relied upon.
 
-- `GET /products?q=` — search
-- `GET /products/:id` — product with variants
+- `GET /products/:id/variants` — expanded variant listing (variants are currently rows with `variantOf`)
+- `GET /catalogue/review` — the unresolved-listing queue (needs admin authorisation)
 - `GET|POST|DELETE /wishlist`
 - `POST /auth/session` — verify a Firebase token (design undecided)
 - `GET /me/subscription`
 
-## 9. Client behaviour
+## 13. Client behaviour
 
 Both clients implement the same rules in `src/services/apiClient.ts`:
 
@@ -356,5 +490,8 @@ Both clients implement the same rules in `src/services/apiClient.ts`:
 - transport failure → `ApiError` with `code: "NETWORK_ERROR"`;
 - a 2xx body without `data` → `ApiError` with `code: "INVALID_RESPONSE"` (contract drift is never
   silently ignored);
-- comparison, coverage and history payloads are parsed against their Zod schemas before rendering,
-  so a drifted response surfaces as an error instead of a wrong price or a false trend.
+- comparison, coverage, history, catalogue search, product identity and listing payloads are parsed
+  against their Zod schemas before rendering, so a drifted response surfaces as an error instead of a
+  wrong price or a false product identity;
+- catalogue search falls back to the local sample catalogue only when the API is unreachable, and
+  says so on screen: searching a different catalogue silently would be misleading.

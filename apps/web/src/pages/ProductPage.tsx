@@ -20,6 +20,7 @@ import { PriceHistorySection } from '../components/ui/PriceHistorySection';
 import { DealLinkNote, PriceComparisonCard } from '../components/ui/PriceComparisonCard';
 import { PriceLabel } from '../components/ui/PriceLabel';
 import { ProductCard } from '../components/ui/ProductCard';
+import { ProductIdentitySection } from '../components/ui/ProductIdentitySection';
 import { SectionHeader } from '../components/ui/SectionHeader';
 import { resolveIcon } from '../components/ui/icons';
 import { demoProducts, marketplaceById } from '../data/demoCatalog';
@@ -301,6 +302,8 @@ export function ProductPage() {
           </section>
 
           <PriceHistorySection productId={product.id} />
+
+          <ProductIdentitySection productId={product.id} />
         </div>
       </div>
 

@@ -1,6 +1,5 @@
 import {
   compareOffers,
-  demoProducts,
   productComparisonResponseSchema,
   withProduct,
   type ProductComparisonResponse,
@@ -11,6 +10,8 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { AppError } from '../utils/AppError.js';
 import { comparisonCache, comparisonCacheKey, type ComparisonCache } from './cache/index.js';
+import { catalogueService } from './catalogue/index.js';
+import { resolveProductIdentity } from './catalogue/productIdentity.js';
 import { snapshotStore as sharedSnapshotStore, type SnapshotStore } from './snapshots/index.js';
 import { createSourceRegistry, type SourceRegistryOptions } from './sources/registry.js';
 
@@ -181,7 +182,9 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
     snapshotStore,
 
     async getComparison(productId: string): Promise<ProductComparisonResponse> {
-      const product = demoProducts.find((entry) => entry.id === productId);
+      // Identity comes from the canonical catalogue; the demo catalogue is only a
+      // documented development fallback. An unresolved product is a 404.
+      const product = await resolveProductIdentity(productId);
       if (!product) {
         throw AppError.notFound(`Unknown product: ${productId}`);
       }
@@ -237,12 +240,33 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
         catalog: CATALOG_ID,
       });
 
+      // Identity provenance and unresolved listings are stated, never hidden: an
+      // unresolved listing is not compared, so the shopper sees fewer offers.
+      const identityNotices: string[] = [];
+
+      if (!product.canonical) {
+        identityNotices.push(
+          'Product identity came from the local sample catalogue: the canonical catalogue has no record for it yet.',
+        );
+      }
+
+      try {
+        const listings = await catalogueService.getListings(productId);
+        if (listings.listingSummary.unresolved > 0) {
+          identityNotices.push(
+            `${listings.listingSummary.unresolved} listing(s) could not be resolved to this product and are not part of this comparison.`,
+          );
+        }
+      } catch {
+        // A missing canonical record is already reported above; listings are optional.
+      }
+
       // Ingest exactly what the adapters reported; nothing is synthesised.
       await persistSnapshots(snapshots, now);
 
       const complete: ProductComparisonResponse = {
         ...response,
-        notices: [...new Set([...notices, ...response.notices])],
+        notices: [...new Set([...notices, ...identityNotices, ...response.notices])],
       };
 
       // A degraded run must not become the cached answer for the next few minutes.

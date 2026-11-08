@@ -21,6 +21,7 @@ import { availableMarketplaceCount, categoryById, demoProducts } from '@smart-sh
 import { Button } from '../components/Button';
 import { DemoNotice } from '../components/DemoNotice';
 import { PriceHistorySection } from '../components/PriceHistorySection';
+import { ProductIdentitySection } from '../components/ProductIdentitySection';
 import { useProductComparison } from '../hooks/useProductComparison';
 import { formatMoney, formatRelativeTime } from '../lib/format';
 import type { RootStackParamList } from '../navigation/types';
@@ -277,6 +278,8 @@ export function ProductScreen({ route, navigation }: Props) {
       </View>
 
       <PriceHistorySection productId={product.id} />
+
+      <ProductIdentitySection productId={product.id} />
 
       <DemoNotice />
     </ScrollView>

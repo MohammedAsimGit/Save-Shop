@@ -5,6 +5,7 @@ import { env, isProduction } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { logger } from './config/logger.js';
 import { ensureModelIndexes } from './models/index.js';
+import { ensureCatalogueSeeded } from './services/catalogue/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -27,6 +28,10 @@ async function start(): Promise<void> {
       } catch (error) {
         logger.error({ err: error }, 'Could not ensure MongoDB indexes');
       }
+
+      // First run only: an empty catalogue is seeded from the sample catalogue.
+      // The seed is idempotent, and failing to seed never stops the API.
+      await ensureCatalogueSeeded();
     }
   } catch (error) {
     logger.fatal({ err: error }, 'Unable to connect to MongoDB');

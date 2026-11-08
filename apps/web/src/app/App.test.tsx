@@ -170,6 +170,23 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** Minimal canonical product fixture used by the catalogue search tests. */
+const canonicalProduct = {
+  id: 'sony-wh1000xm5',
+  name: 'Sony WH-1000XM5 Wireless Headphones',
+  brand: 'Sony',
+  category: 'audio',
+  specifications: {},
+  variantOf: null,
+  variantAttributes: {},
+  imageUrls: [],
+  status: 'active' as const,
+  provenance: 'demo' as const,
+  isSample: true,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
 const fetchMock = { calls: [] as string[] };
 
 /** Routes comparison and history requests separately, and records the URLs. */
@@ -398,6 +415,73 @@ describe('SaveShop web interface', () => {
     expect(screen.getByText(/compacted into the daily summaries below/i)).toBeInTheDocument();
     // Nothing is drawn from the aggregate.
     expect(screen.queryByRole('img', { name: /price observations over/i })).not.toBeInTheDocument();
+  });
+
+  it('searches the canonical catalogue and labels the result source', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          query: { q: 'sony', brand: null, category: null, model: null },
+          products: [canonicalProduct],
+          page: 1,
+          pageSize: 12,
+          totalItems: 1,
+          ordering: 'relevance',
+          notices: ['Matches are against canonical product identity.'],
+        }),
+      ),
+    );
+
+    renderAt('/search?q=sony');
+
+    expect(await screen.findByText('Canonical catalogue')).toBeInTheDocument();
+    expect(screen.getByText(/Sony WH-1000XM5/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Local sample catalogue/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a canonical product with no sample price instead of borrowing one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({
+          query: { q: '', brand: null, category: null, model: null },
+          products: [
+            canonicalProduct,
+            {
+              ...canonicalProduct,
+              id: 'future-product',
+              name: 'Future Product Without Sample Data',
+            },
+          ],
+          page: 1,
+          pageSize: 12,
+          totalItems: 2,
+          ordering: 'relevance',
+          notices: [],
+        }),
+      ),
+    );
+
+    renderAt('/search');
+
+    expect(await screen.findByText('Future Product Without Sample Data')).toBeInTheDocument();
+    expect(screen.getByText(/No stored sample price yet/i)).toBeInTheDocument();
+  });
+
+  it('falls back to the local sample catalogue when the catalogue API fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('network down');
+      }),
+    );
+
+    renderAt('/search?q=sony');
+
+    expect(await screen.findByText('Local sample catalogue')).toBeInTheDocument();
+    expect(screen.getByText(/Sony WH-1000XM5/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not be reached/i)).toBeInTheDocument();
   });
 
   it('switches to the dark theme and remembers the choice', async () => {

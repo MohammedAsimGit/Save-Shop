@@ -1,4 +1,7 @@
+import { CanonicalProductModel } from './canonicalProduct.js';
+import { CatalogueIngestionRunModel } from './catalogueIngestionRun.js';
 import { ComparisonCacheModel } from './comparisonCache.js';
+import { MarketplaceListingModel } from './marketplaceListing.js';
 import { PriceDailyRollupModel } from './priceDailyRollup.js';
 import { PriceSnapshotModel } from './priceSnapshot.js';
 import { RetentionRunModel } from './retentionRun.js';
@@ -20,5 +23,8 @@ export async function ensureModelIndexes(): Promise<void> {
     ComparisonCacheModel.createIndexes(),
     PriceDailyRollupModel.createIndexes(),
     RetentionRunModel.createIndexes(),
+    CanonicalProductModel.createIndexes(),
+    MarketplaceListingModel.createIndexes(),
+    CatalogueIngestionRunModel.createIndexes(),
   ]);
 }
