@@ -66,10 +66,32 @@ export interface SnapshotHistoryQuery {
 }
 
 export interface StoredSnapshot {
+  /** Stable identity; also the paging cursor for `listRange`. */
+  readonly observationKey: string;
   readonly snapshot: OfferSnapshot;
   readonly sourceVerification: StoredVerification;
   readonly isSample: boolean;
   readonly ingestedAt: Date;
+}
+
+/** Time-ordered window used by rollup generation and retention. */
+export interface SnapshotRangeQuery {
+  readonly from: Date;
+  /** Exclusive end, so adjacent days never share an observation. */
+  readonly to: Date;
+  readonly limit: number;
+  /**
+   * Resume strictly after this (capturedAt, observationKey) pair. A tuple rather
+   * than a bare key, because ordering is by time first and equal timestamps are
+   * common with a deterministic demo source.
+   */
+  readonly after?: { readonly capturedAt: Date; readonly observationKey: string };
+}
+
+export interface SnapshotDayCount {
+  /** UTC calendar date, `YYYY-MM-DD`. */
+  readonly date: string;
+  readonly count: number;
 }
 
 export interface SnapshotStore {
@@ -80,6 +102,27 @@ export interface SnapshotStore {
   ): Promise<SnapshotWriteResult>;
   /** Most recent `limit` observations inside the window, oldest first. */
   listHistory(query: SnapshotHistoryQuery): Promise<StoredSnapshot[]>;
+  /**
+   * Paged read over `[from, to)`, ordered by capture time then key. Used by the
+   * rollup service; it must never return a row twice, or a day would be
+   * double-counted.
+   */
+  listRange(query: SnapshotRangeQuery): Promise<StoredSnapshot[]>;
+  /** UTC days that still hold raw observations older than `cutoff`, oldest first. */
+  listDaysBefore(query: {
+    readonly cutoff: Date;
+    readonly limit: number;
+  }): Promise<SnapshotDayCount[]>;
+  countRange(query: { readonly from: Date; readonly to: Date }): Promise<number>;
+  /**
+   * Deletes the oldest observations in `[from, to)`, at most `limit` per call.
+   * Returns how many documents were actually removed.
+   */
+  deleteRange(query: {
+    readonly from: Date;
+    readonly to: Date;
+    readonly limit: number;
+  }): Promise<number>;
 }
 
 /**
@@ -169,6 +212,7 @@ export function prepareSnapshotRecords(
 /** Converts a stored record back into the transport contract. */
 export function toStoredSnapshot(record: SnapshotRecord): StoredSnapshot {
   return {
+    observationKey: record.observationKey,
     snapshot: {
       productId: record.productId,
       marketplaceId: record.marketplaceId,

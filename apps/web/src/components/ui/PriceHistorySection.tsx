@@ -5,6 +5,7 @@ import {
   DEFAULT_HISTORY_PERIOD,
   type HistoryObservation,
   type HistoryPeriod,
+  type HistoryRollup,
   type PriceHistoryResponse,
 } from '@smart-shopping/shared';
 
@@ -102,7 +103,10 @@ export function PriceHistorySection({ productId }: { readonly productId: string 
 }
 
 function HistoryBody({ history }: { readonly history: PriceHistoryResponse }) {
-  if (history.observations.length === 0) {
+  const hasObservations = history.observations.length > 0;
+  const hasArchived = history.rollups.length > 0;
+
+  if (!hasObservations && !hasArchived) {
     return (
       <div className="mt-4 rounded-tile border border-dashed border-line-strong/70 bg-surface-muted/50 p-4">
         <p className="flex items-center gap-2 text-sm font-medium text-ink">
@@ -117,6 +121,39 @@ function HistoryBody({ history }: { readonly history: PriceHistoryResponse }) {
     );
   }
 
+  return (
+    <div className="mt-4 space-y-4">
+      {hasObservations ? (
+        <ObservationBody history={history} />
+      ) : (
+        <div className="rounded-tile border border-dashed border-line-strong/70 bg-surface-muted/50 p-4">
+          <p className="flex items-center gap-2 text-sm font-medium text-ink">
+            <LineChart aria-hidden="true" className="size-4 text-ink-subtle" />
+            No full-resolution observation in the last {periodLabel(history.period)}
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">
+            These days were compacted into the daily summaries below. Nothing is reconstructed or
+            interpolated from them, so no chart is drawn.
+          </p>
+        </div>
+      )}
+
+      {hasArchived && <ArchivedDays rollups={history.rollups} />}
+
+      <ul className="space-y-1 text-[11px] text-ink-subtle">
+        {history.notices.map((notice) => (
+          <li key={notice} className="flex items-start gap-1.5">
+            <Clock3 aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+            {notice}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The charted part: real point observations only, never a daily aggregate. */
+function ObservationBody({ history }: { readonly history: PriceHistoryResponse }) {
   const verified = history.observations.filter((observation) => !observation.isSample);
   const sample = history.observations.filter((observation) => observation.isSample);
   const charted: HistoryObservation[] = verified.length > 0 ? verified : sample;
@@ -125,7 +162,7 @@ function HistoryBody({ history }: { readonly history: PriceHistoryResponse }) {
   const sources = [...new Set(charted.map((observation) => observation.source.displayName))];
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {chartedIsSample ? (
           <Badge tone="outline">Demo observations</Badge>
@@ -181,12 +218,64 @@ function HistoryBody({ history }: { readonly history: PriceHistoryResponse }) {
           history and must not be read as a real price trend.
         </p>
       )}
+    </div>
+  );
+}
 
-      <ul className="space-y-1 text-[11px] text-ink-subtle">
-        {history.notices.map((notice) => (
-          <li key={notice} className="flex items-start gap-1.5">
-            <Clock3 aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
-            {notice}
+/**
+ * Archived days compacted out of raw storage.
+ *
+ * Rendered as a list, never as chart points: a day's min/max/first/last is an
+ * aggregate, and plotting it on a price axis would imply a time-of-day price that
+ * was never observed.
+ */
+function ArchivedDays({ rollups }: { readonly rollups: readonly HistoryRollup[] }) {
+  return (
+    <div className="rounded-tile border border-line-strong/70 bg-surface-muted/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-ink">Archived daily summaries</h3>
+        <Badge tone="outline">Daily aggregate</Badge>
+      </div>
+      <p className="mt-1 text-[11px] text-ink-subtle">
+        One row per marketplace and source per day: min, max, first and last of the stored
+        observations. These are not point-in-time marketplace prices.
+      </p>
+
+      <ul className="mt-3 space-y-2">
+        {rollups.map((rollup) => (
+          <li
+            key={`${rollup.date}-${rollup.marketplaceId}-${rollup.sourceId}-${rollup.isSample}`}
+            className="rounded-tile border border-line bg-surface px-3 py-2"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium text-ink">{formatShortDate(rollup.date)}</span>
+              <span className="flex items-center gap-2 text-[11px] text-ink-subtle">
+                {rollup.marketplaceId} · {rollup.source.displayName}
+                {rollup.isSample && <Badge tone="neutral">Demo</Badge>}
+              </span>
+            </div>
+            <dl className="tabular mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+              <div>
+                <dt className="inline text-ink-subtle">Min </dt>
+                <dd className="inline">{formatMoney(rollup.minPrice)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-ink-subtle">Max </dt>
+                <dd className="inline">{formatMoney(rollup.maxPrice)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-ink-subtle">First </dt>
+                <dd className="inline">{formatMoney(rollup.firstPrice)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-ink-subtle">Last </dt>
+                <dd className="inline">{formatMoney(rollup.lastPrice)}</dd>
+              </div>
+              <div>
+                <dt className="inline text-ink-subtle">Observations </dt>
+                <dd className="inline">{rollup.observationCount}</dd>
+              </div>
+            </dl>
           </li>
         ))}
       </ul>

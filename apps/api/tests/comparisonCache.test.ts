@@ -208,13 +208,14 @@ describe('snapshot ingestion from the comparison service', () => {
   it('persists what the adapters reported on a cache miss only', async () => {
     const inner = createMemorySnapshotStore();
     let saves = 0;
+    // Spread the real store so this stub keeps every newer SnapshotStore
+    // method (range reads, retention deletes) without re-implementing them.
     const countingStore: SnapshotStore = {
-      kind: 'memory',
+      ...inner,
       async saveMany(snapshots, context) {
         saves += 1;
         return inner.saveMany(snapshots, context);
       },
-      listHistory: (query) => inner.listHistory(query),
     };
 
     const { service } = harness({ store: countingStore });
@@ -254,12 +255,10 @@ describe('snapshot ingestion from the comparison service', () => {
 
   it('keeps serving the comparison when persistence fails', async () => {
     const brokenStore: SnapshotStore = {
+      ...createMemorySnapshotStore(),
       kind: 'mongodb',
       async saveMany() {
         throw new Error('mongodb is down');
-      },
-      async listHistory() {
-        return [];
       },
     };
 

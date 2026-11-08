@@ -103,4 +103,39 @@ describe('fetchProductHistory', () => {
 
     await expect(fetchProductHistory('sony-wh1000xm5', '30d')).rejects.toThrow(/contract/i);
   });
+
+  it('defaults a missing rollups array and accepts archived daily summaries', async () => {
+    mockFetch(validPayload);
+    const withoutRollups = await fetchProductHistory('sony-wh1000xm5', '30d');
+    expect(withoutRollups.rollups).toEqual([]);
+
+    mockFetch({
+      ...validPayload,
+      rollups: [
+        {
+          productId: 'sony-wh1000xm5',
+          sourceId: 'demo-catalog',
+          marketplaceId: 'amazon',
+          currency: 'INR',
+          date: '2026-10-15',
+          minPrice: { amountMinor: 2_499_000, currency: 'INR' },
+          maxPrice: { amountMinor: 2_899_000, currency: 'INR' },
+          firstPrice: { amountMinor: 2_899_000, currency: 'INR' },
+          lastPrice: { amountMinor: 2_499_000, currency: 'INR' },
+          observationCount: 6,
+          availabilityCounts: { inStock: 5, outOfStock: 1, preorder: 0, unknown: 0 },
+          sourceVerification: 'sample',
+          isSample: true,
+          generatedAt: '2026-11-01T00:00:00.000Z',
+          aggregated: true,
+          source,
+        },
+      ],
+    });
+
+    const withRollups = await fetchProductHistory('sony-wh1000xm5', '30d');
+    expect(withRollups.rollups).toHaveLength(1);
+    expect(withRollups.rollups[0]?.aggregated).toBe(true);
+    expect(withRollups.rollups[0]?.observationCount).toBe(6);
+  });
 });

@@ -47,6 +47,29 @@ const rawEnvSchema = z.object({
    * Defaults on outside production and off in it; an explicit value always wins.
    */
   PERSIST_DEMO_SNAPSHOTS: z.enum(['true', 'false']).optional(),
+
+  /**
+   * Sprint 4 retention policy.
+   *
+   * These are product decisions, not legal requirements: the project has no
+   * regulatory retention mandate, so the numbers are configurable and documented
+   * as defaults rather than presented as compliance rules.
+   *
+   * - `RETENTION_RAW_DAYS`: full-resolution observations younger than this are
+   *   always kept; older days are compacted into daily rollups. It is deliberately
+   *   shorter than the 90-day history window, so the 90d view actually shows
+   *   archived days instead of compacting data nobody can request.
+   * - `RETENTION_ROLLUP_DAYS`: daily rollups younger than this are kept. It must
+   *   be at least as long as the raw window, otherwise history would be deleted
+   *   twice over.
+   * - `RETENTION_BATCH_SIZE`: documents per read/delete batch.
+   * - `RETENTION_DRY_RUN`: the manual job defaults to reporting what it *would*
+   *   delete; `--apply` (or this set to `false`) is required to delete anything.
+   */
+  RETENTION_RAW_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+  RETENTION_ROLLUP_DAYS: z.coerce.number().int().min(1).max(7300).default(730),
+  RETENTION_BATCH_SIZE: z.coerce.number().int().min(1).max(10_000).default(500),
+  RETENTION_DRY_RUN: z.enum(['true', 'false']).default('true'),
 });
 
 const envSchema = rawEnvSchema.superRefine((value, ctx) => {
@@ -87,7 +110,25 @@ const envSchema = rawEnvSchema.superRefine((value, ctx) => {
       });
     }
   }
+
+  // Rollups must outlive the raw observations they replace, or compaction would
+  // delete history twice over: once as rows, once as aggregates.
+  if (value.RETENTION_ROLLUP_DAYS < value.RETENTION_RAW_DAYS) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['RETENTION_ROLLUP_DAYS'],
+      message: 'RETENTION_ROLLUP_DAYS must be greater than or equal to RETENTION_RAW_DAYS',
+    });
+  }
 });
+
+export interface RetentionPolicy {
+  readonly rawRetentionDays: number;
+  readonly rollupRetentionDays: number;
+  readonly batchSize: number;
+  /** Default for a manual run; the CLI can override it with `--apply`. */
+  readonly dryRun: boolean;
+}
 
 export type Environment = z.infer<typeof rawEnvSchema> & {
   readonly corsAllowedOrigins: readonly string[];
@@ -95,6 +136,8 @@ export type Environment = z.infer<typeof rawEnvSchema> & {
   readonly isDatabaseConfigured: boolean;
   /** Effective policy for storing sample observations; see `PERSIST_DEMO_SNAPSHOTS`. */
   readonly persistDemoSnapshots: boolean;
+  /** Validated compaction policy (Sprint 4); see the schema comments above. */
+  readonly retention: RetentionPolicy;
 };
 
 /**
@@ -141,6 +184,12 @@ export function parseEnvironment(source: NodeJS.ProcessEnv): Environment {
       value.PERSIST_DEMO_SNAPSHOTS === undefined
         ? value.NODE_ENV !== 'production'
         : value.PERSIST_DEMO_SNAPSHOTS === 'true',
+    retention: Object.freeze({
+      rawRetentionDays: value.RETENTION_RAW_DAYS,
+      rollupRetentionDays: value.RETENTION_ROLLUP_DAYS,
+      batchSize: value.RETENTION_BATCH_SIZE,
+      dryRun: value.RETENTION_DRY_RUN === 'true',
+    }),
   });
 }
 

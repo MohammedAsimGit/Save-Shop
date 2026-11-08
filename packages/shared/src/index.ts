@@ -84,6 +84,16 @@ export type {
   PriceHistoryResponse,
 } from './contracts/history.js';
 
+// Daily rollups (Sprint 4). Aggregates are a distinct type, never an observation.
+export {
+  rollupDateSchema,
+  rollupAvailabilitySchema,
+  dailyRollupSchema,
+  historyRollupSchema,
+  HISTORY_MAX_ROLLUP_DAYS,
+} from './contracts/rollups.js';
+export type { RollupAvailability, DailyRollup, HistoryRollup } from './contracts/rollups.js';
+
 export {
   palette,
   themes,

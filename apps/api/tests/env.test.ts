@@ -99,6 +99,45 @@ describe('environment validation', () => {
     ).toBe(true);
   });
 
+  it('exposes a dry-run-by-default retention policy', () => {
+    const env = parseEnvironment({});
+
+    expect(env.retention).toEqual({
+      rawRetentionDays: 30,
+      rollupRetentionDays: 730,
+      batchSize: 500,
+      dryRun: true,
+    });
+  });
+
+  it('validates and parses explicit retention settings', () => {
+    const env = parseEnvironment({
+      RETENTION_RAW_DAYS: '30',
+      RETENTION_ROLLUP_DAYS: '365',
+      RETENTION_BATCH_SIZE: '50',
+      RETENTION_DRY_RUN: 'false',
+    });
+
+    expect(env.retention).toEqual({
+      rawRetentionDays: 30,
+      rollupRetentionDays: 365,
+      batchSize: 50,
+      dryRun: false,
+    });
+  });
+
+  it('refuses a rollup window shorter than the raw window', () => {
+    expect(() =>
+      parseEnvironment({ RETENTION_RAW_DAYS: '90', RETENTION_ROLLUP_DAYS: '30' }),
+    ).toThrow(/RETENTION_ROLLUP_DAYS/);
+  });
+
+  it('rejects an out-of-range retention window and batch size', () => {
+    expect(() => parseEnvironment({ RETENTION_RAW_DAYS: '0' })).toThrow(/RETENTION_RAW_DAYS/);
+    expect(() => parseEnvironment({ RETENTION_BATCH_SIZE: '0' })).toThrow(/RETENTION_BATCH_SIZE/);
+    expect(() => parseEnvironment({ RETENTION_DRY_RUN: 'yes' })).toThrow(/RETENTION_DRY_RUN/);
+  });
+
   it('defaults the comparison cache to five minutes and validates its range', () => {
     expect(parseEnvironment({}).COMPARISON_CACHE_TTL_SECONDS).toBe(300);
     expect(

@@ -19,6 +19,7 @@
     "dev:api": "npm run dev --workspace @smart-shopping/api",
     "dev:web": "npm run dev --workspace @smart-shopping/web",
     "dev:mobile": "npm run start --workspace @smart-shopping/mobile",
+    "retention": "npm run retention --workspace @smart-shopping/api",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

@@ -9,6 +9,7 @@ import {
   offerAvailabilitySchema,
 } from './comparison.js';
 import { comparedProductSchema } from './comparison.js';
+import { HISTORY_MAX_ROLLUP_DAYS, historyRollupSchema } from './rollups.js';
 
 /**
  * Price history contract.
@@ -124,6 +125,16 @@ export const priceHistoryResponseSchema = z.object({
   status: historyStatusSchema,
   /** Chronological, oldest first. Every point is a real stored observation. */
   observations: z.array(historyObservationSchema),
+  /**
+   * Archived daily aggregates for days already compacted out of raw storage.
+   * Deliberately a separate array: a daily aggregate is never an observation, so
+   * it must not be plotted or ranked as a point-in-time price. Defaults to empty,
+   * which keeps older payloads (and older clients) valid.
+   */
+  rollups: z
+    .array(historyRollupSchema)
+    .max(HISTORY_MAX_ROLLUP_DAYS * 6)
+    .default([]),
   summary: historySummarySchema,
   /** Echo of the filters, so a client can show what was asked for. */
   filters: z.object({

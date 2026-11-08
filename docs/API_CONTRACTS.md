@@ -255,6 +255,26 @@ Query parameters (all validated with Zod; unknown values are a `400`):
         "freshness": "fresh"
       }
     ],
+    "rollups": [
+      {
+        "productId": "sony-wh1000xm5",
+        "sourceId": "demo-catalog",
+        "marketplaceId": "amazon",
+        "currency": "INR",
+        "date": "2026-08-14",
+        "minPrice": { "amountMinor": 2499000, "currency": "INR" },
+        "maxPrice": { "amountMinor": 2899000, "currency": "INR" },
+        "firstPrice": { "amountMinor": 2899000, "currency": "INR" },
+        "lastPrice": { "amountMinor": 2499000, "currency": "INR" },
+        "observationCount": 6,
+        "availabilityCounts": { "inStock": 5, "outOfStock": 1, "preorder": 0, "unknown": 0 },
+        "sourceVerification": "sample",
+        "isSample": true,
+        "generatedAt": "2026-11-07T02:00:00.000Z",
+        "aggregated": true,
+        "source": { "id": "demo-catalog", "verification": "sample", "...": "..." }
+      }
+    ],
     "summary": {
       "verified": { "count": 0, "lowest": null, "latest": null },
       "sample": {
@@ -286,14 +306,24 @@ Field rules:
 
 - `observations` — chronological, oldest first. Stale observations are kept (history is history) but
   carry `freshness: "stale"`, so a client can never present one as current.
+- `rollups` — archived **daily aggregates** for days already compacted out of raw storage, oldest
+  first (Sprint 4). One entry per `(day, marketplace, source, currency, provenance)`. It carries
+  `aggregated: true`, the day's `minPrice`/`maxPrice`/`firstPrice`/`lastPrice`, the
+  `observationCount` and the availability counts. Rollups are **not** observations: they are never
+  added to `observations`, never counted in `summary`, and never plotted as a point-in-time price.
+  The field defaults to `[]`, so payloads (and older clients) without it remain valid.
 - `summary.verified` / `summary.sample` — **separate by provenance and never merged**. There is no
   single "lowest ever" figure, because that number would mix invented and observed data.
 - `status` — `no_history`, `sample_only`, `verified` or `mixed`; `mixed` means both provenances are
   present and the UI must keep them apart.
 - Excluded from the payload and explained in `notices`: unparseable rows, rows from a source that is
   no longer registered, and prices in another currency (no conversion is performed).
-- A known product with nothing stored is `200` with `status: "no_history"` and an empty
-  `observations` array; an unknown product is `404 NOT_FOUND`.
+- A known product with nothing stored is `200` with `status: "no_history"` and empty
+  `observations`/`rollups` arrays; an unknown product is `404 NOT_FOUND`.
+- When a window has been compacted, `observations` may be empty while `rollups` is not. `status` is
+  then derived from the archived provenance (`verified`, `sample_only` or `mixed`), never reported as
+  `no_history`, and a notice explains the compaction. Rollups in another currency, or from a source
+  that is no longer registered, are excluded and counted in `notices` — never converted or merged.
 
 ## 7. Other endpoints
 

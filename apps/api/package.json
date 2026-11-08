@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "retention": "tsx src/scripts/retention.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

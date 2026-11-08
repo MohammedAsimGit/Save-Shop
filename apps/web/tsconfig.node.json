@@ -8,5 +8,5 @@
     "noEmit": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts"]
+  "files": ["vite.config.ts", "vitest.config.ts"]
 }

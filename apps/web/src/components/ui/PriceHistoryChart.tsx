@@ -54,8 +54,8 @@ export function PriceHistoryChart({
           </linearGradient>
         </defs>
 
-        {geometry.ticks.map((tick) => (
-          <g key={tick.y.toFixed(2)}>
+        {geometry.ticks.map((tick, index) => (
+          <g key={`grid-${index}`}>
             <line
               x1={CHART_PADDING.left}
               x2={CHART_WIDTH - CHART_PADDING.right}

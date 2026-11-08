@@ -138,8 +138,29 @@ const historyPayload: PriceHistoryResponse = {
       },
     },
   },
+  rollups: [],
   filters: { sourceId: null, marketplaceId: null, limit: 200 },
   notices: ['Sample observations are invented demo prices, not marketplace history.'],
+};
+
+/** One archived day: an aggregate, which the UI must never plot as a price point. */
+const archivedRollup = {
+  productId: 'sony-wh1000xm5',
+  sourceId: 'demo-catalog',
+  marketplaceId: 'amazon',
+  currency: 'INR',
+  date: '2026-10-15',
+  minPrice: { amountMinor: 2_499_000, currency: 'INR' },
+  maxPrice: { amountMinor: 2_899_000, currency: 'INR' },
+  firstPrice: { amountMinor: 2_899_000, currency: 'INR' },
+  lastPrice: { amountMinor: 2_499_000, currency: 'INR' },
+  observationCount: 6,
+  availabilityCounts: { inStock: 5, outOfStock: 1, preorder: 0, unknown: 0 },
+  sourceVerification: 'sample' as const,
+  isSample: true,
+  generatedAt: '2026-11-01T00:00:00.000Z',
+  aggregated: true as const,
+  source: demosource,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -337,6 +358,46 @@ describe('SaveShop web interface', () => {
       screen.getByRole('img', { name: /verified price observations over 30 days/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(/excluded from this chart/i)).toBeInTheDocument();
+  });
+
+  it('lists archived daily summaries without charting them as price points', async () => {
+    mockComparison(comparisonPayload, { ...historyPayload, rollups: [archivedRollup] });
+
+    renderAt('/product/sony-wh1000xm5');
+
+    expect(await screen.findByText('Archived daily summaries')).toBeInTheDocument();
+    expect(screen.getByText(/Daily aggregate/i)).toBeInTheDocument();
+    expect(screen.getByText(/not point-in-time marketplace prices/i)).toBeInTheDocument();
+    // Min/last and max/first share a value in this fixture, so each renders twice.
+    expect(screen.getAllByText('₹24,990').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('₹28,990').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/Observations/).length).toBeGreaterThan(0);
+    // The chart still describes the two point observations, not the aggregate.
+    expect(screen.getByText(/2 stored observations/i)).toBeInTheDocument();
+  });
+
+  it('shows archived days when a window has no full-resolution observations left', async () => {
+    mockComparison(comparisonPayload, {
+      ...historyPayload,
+      status: 'sample_only',
+      observations: [],
+      rollups: [archivedRollup],
+      summary: {
+        verified: { count: 0, lowest: null, latest: null },
+        sample: { count: 0, lowest: null, latest: null },
+      },
+      notices: [
+        'Raw observations for this window were compacted; 1 archived daily summary is shown instead.',
+      ],
+    });
+
+    renderAt('/product/sony-wh1000xm5');
+
+    expect(await screen.findByText(/no full-resolution observation/i)).toBeInTheDocument();
+    expect(screen.getByText('Archived daily summaries')).toBeInTheDocument();
+    expect(screen.getByText(/compacted into the daily summaries below/i)).toBeInTheDocument();
+    // Nothing is drawn from the aggregate.
+    expect(screen.queryByRole('img', { name: /price observations over/i })).not.toBeInTheDocument();
   });
 
   it('switches to the dark theme and remembers the choice', async () => {

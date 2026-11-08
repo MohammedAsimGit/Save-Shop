@@ -14,6 +14,7 @@ import {
   DEFAULT_HISTORY_PERIOD,
   type HistoryObservation,
   type HistoryPeriod,
+  type HistoryRollup,
   type PriceHistoryResponse,
 } from '@smart-shopping/shared';
 
@@ -111,8 +112,10 @@ function HistoryBody({
   const { width } = useWindowDimensions();
   const styles = buildStyles(colors, false);
   const chartWidth = Math.max(240, width - spacing.lg * 4);
+  const hasObservations = history.observations.length > 0;
+  const hasArchived = history.rollups.length > 0;
 
-  if (history.observations.length === 0) {
+  if (!hasObservations && !hasArchived) {
     return (
       <View style={styles.empty}>
         <LineChart size={16} color={colors.textSubtle} />
@@ -121,6 +124,22 @@ function HistoryBody({
           History starts when the API reads a price source for this product. Nothing is drawn until
           that has happened.
         </Text>
+      </View>
+    );
+  }
+
+  if (!hasObservations) {
+    return (
+      <View style={styles.body}>
+        <View style={styles.empty}>
+          <LineChart size={16} color={colors.textSubtle} />
+          <Text style={styles.emptyTitle}>No full-resolution observation in this period</Text>
+          <Text style={styles.description}>
+            These days were compacted into the daily summaries below. Nothing is reconstructed or
+            interpolated from them, so no chart is drawn.
+          </Text>
+        </View>
+        <ArchivedDays rollups={history.rollups} styles={styles} />
       </View>
     );
   }
@@ -194,6 +213,56 @@ function HistoryBody({
           </Text>
         </View>
       )}
+
+      {hasArchived ? <ArchivedDays rollups={history.rollups} styles={styles} /> : null}
+    </View>
+  );
+}
+
+/**
+ * Archived days compacted out of raw storage.
+ *
+ * A list, not chart points: min/max/first/last describe a whole day, and plotting
+ * them on a price axis would imply a time-of-day price nobody observed.
+ */
+function ArchivedDays({
+  rollups,
+  styles,
+}: {
+  readonly rollups: readonly HistoryRollup[];
+  readonly styles: ReturnType<typeof buildStyles>;
+}) {
+  return (
+    <View style={styles.archivedCard}>
+      <View style={styles.badgeRow}>
+        <Text style={styles.archivedTitle}>Archived daily summaries</Text>
+        <Text style={[styles.badge, styles.badgeDemo]}>DAILY AGGREGATE</Text>
+      </View>
+      <Text style={styles.description}>
+        One row per marketplace and source per day: min, max, first and last of the stored
+        observations. Not point-in-time marketplace prices.
+      </Text>
+
+      {rollups.map((rollup) => (
+        <View
+          key={`${rollup.date}-${rollup.marketplaceId}-${rollup.sourceId}-${String(rollup.isSample)}`}
+          style={styles.archivedRow}
+        >
+          <View style={styles.badgeRow}>
+            <Text style={styles.archivedDate}>{formatShortDate(rollup.date)}</Text>
+            <Text style={styles.archivedMeta} numberOfLines={1}>
+              {rollup.marketplaceId} · {rollup.source.displayName}
+            </Text>
+            {rollup.isSample ? <Text style={[styles.badge, styles.badgeDemo]}>DEMO</Text> : null}
+          </View>
+          <Text style={styles.archivedMeta}>
+            Min {formatMoney(rollup.minPrice)} · Max {formatMoney(rollup.maxPrice)} · First{' '}
+            {formatMoney(rollup.firstPrice)} · Last {formatMoney(rollup.lastPrice)} ·{' '}
+            {rollup.observationCount} observation
+            {rollup.observationCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -461,6 +530,26 @@ function buildStyles(colors: ThemeColors, isDark: boolean) {
     statValue: { color: colors.text, fontSize: fontSizes.sm, fontWeight: '700' },
     statHint: { color: colors.textSubtle, fontSize: 10 },
     sourceLine: { color: colors.textSubtle, fontSize: 11 },
+    archivedCard: {
+      backgroundColor: isDark ? colors.surfaceMuted : colors.background,
+      borderColor: colors.border,
+      borderRadius: radii.md,
+      borderWidth: 1,
+      gap: spacing.xs,
+      marginTop: spacing.xs,
+      padding: spacing.md,
+    },
+    archivedTitle: { color: colors.text, flexShrink: 1, fontSize: fontSizes.sm, fontWeight: '600' },
+    archivedRow: {
+      borderColor: colors.border,
+      borderRadius: radii.sm,
+      borderWidth: 1,
+      gap: 2,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    archivedDate: { color: colors.text, fontSize: fontSizes.xs, fontWeight: '600' },
+    archivedMeta: { color: colors.textSubtle, flexShrink: 1, fontSize: 10, lineHeight: 15 },
     note: { flexDirection: 'row', gap: spacing.xs, paddingTop: spacing.xxs },
     noteText: { color: colors.textSubtle, flex: 1, fontSize: 11, lineHeight: 16 },
   });

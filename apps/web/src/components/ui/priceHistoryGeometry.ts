@@ -80,7 +80,11 @@ export function buildChartGeometry(
     { y: yFor(rawMax), label: formatMoney({ amountMinor: rawMax, currency: 'INR' }) },
     { y: yFor((rawMax + rawMin) / 2), label: null },
     { y: yFor(rawMin), label: formatMoney({ amountMinor: rawMin, currency: 'INR' }) },
-  ];
+  ].filter(
+    // A flat series puts max, mid and min on the same pixel; drawing the same grid
+    // line three times is noise (and a duplicate React key), so keep the first.
+    (tick, index, all) => all.findIndex((entry) => entry.y === tick.y) === index,
+  );
 
   const spansHours = maxTime - minTime < 48 * 3_600_000;
 

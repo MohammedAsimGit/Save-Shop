@@ -2,7 +2,9 @@ import { PriceSnapshotModel, type PriceSnapshotFields } from '../../models/price
 import {
   prepareSnapshotRecords,
   toStoredSnapshot,
+  type SnapshotDayCount,
   type SnapshotHistoryQuery,
+  type SnapshotRangeQuery,
   type SnapshotRecord,
   type SnapshotStore,
   type SnapshotWriteContext,
@@ -91,10 +93,81 @@ export function createMongoSnapshotStore(): SnapshotStore {
 
       return documents.reverse().map((document) => toStoredSnapshot(toRecord(document)));
     },
+
+    async listRange(query: SnapshotRangeQuery): Promise<StoredSnapshot[]> {
+      const conditions: Record<string, unknown>[] = [
+        { capturedAt: { $gte: query.from, $lt: query.to } },
+      ];
+      if (query.after) {
+        conditions.push({
+          $or: [
+            { capturedAt: { $gt: query.after.capturedAt } },
+            {
+              capturedAt: query.after.capturedAt,
+              observationKey: { $gt: query.after.observationKey },
+            },
+          ],
+        });
+      }
+
+      const documents = await PriceSnapshotModel.find({ $and: conditions })
+        .sort({ capturedAt: 1, observationKey: 1 })
+        .limit(query.limit)
+        .lean<PriceSnapshotFields[]>();
+
+      return documents.map((document) => toStoredSnapshot(toRecord(document)));
+    },
+
+    async listDaysBefore(query: {
+      readonly cutoff: Date;
+      readonly limit: number;
+    }): Promise<SnapshotDayCount[]> {
+      const rows = await PriceSnapshotModel.aggregate<{ _id: string; count: number }>([
+        { $match: { capturedAt: { $lt: query.cutoff } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$capturedAt', timezone: 'UTC' } },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $limit: query.limit },
+      ]);
+
+      return rows.map((row) => ({ date: row._id, count: row.count }));
+    },
+
+    async countRange(query: { readonly from: Date; readonly to: Date }): Promise<number> {
+      return PriceSnapshotModel.countDocuments({
+        capturedAt: { $gte: query.from, $lt: query.to },
+      });
+    },
+
+    async deleteRange(query: {
+      readonly from: Date;
+      readonly to: Date;
+      readonly limit: number;
+    }): Promise<number> {
+      const ids = await PriceSnapshotModel.find({
+        capturedAt: { $gte: query.from, $lt: query.to },
+      })
+        .sort({ capturedAt: 1, observationKey: 1 })
+        .limit(query.limit)
+        .select({ _id: 1 })
+        .lean<{ _id: unknown }[]>();
+
+      if (ids.length === 0) return 0;
+
+      const result = await PriceSnapshotModel.deleteMany({
+        _id: { $in: ids.map((document) => document._id) },
+      });
+      return result.deletedCount ?? 0;
+    },
   };
 }
 
 function toRecord(document: PriceSnapshotFields): SnapshotRecord {
+  // `_id` is not part of the domain record; paging uses the observation key.
   return {
     observationKey: document.observationKey,
     productId: document.productId,

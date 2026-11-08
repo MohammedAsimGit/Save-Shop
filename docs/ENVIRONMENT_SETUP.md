@@ -57,6 +57,12 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 LOG_LEVEL=info
 COMPARISON_CACHE_TTL_SECONDS=300   # 0 disables comparison caching
 PERSIST_DEMO_SNAPSHOTS=true        # default: on outside production, off in it
+
+# Sprint 4 retention policy (product decisions, not legal requirements)
+RETENTION_RAW_DAYS=30              # full-resolution window; older days are compacted
+RETENTION_ROLLUP_DAYS=730          # daily-rollup window; must be >= RETENTION_RAW_DAYS
+RETENTION_BATCH_SIZE=500           # documents per read/delete batch
+RETENTION_DRY_RUN=true             # the CLI reports only unless --apply is passed
 ```
 
 `MONGODB_URI` empty is still supported: the API then keeps price history and the comparison cache in
@@ -104,6 +110,7 @@ EXPO_PUBLIC_API_BASE_URL=http://10.0.2.2:4000/api/v1
 | `npm run format` / `npm run format:check` | Prettier write / verify                        |
 | `npm run test`                            | Build shared, then run every workspace's tests |
 | `npm run verify`                          | typecheck + lint + test                        |
+| `npm run retention`                       | Retention/compaction job (dry run by default)  |
 
 Use three terminals (API, web, mobile) for full-stack development.
 
@@ -120,7 +127,22 @@ To run with a database:
 
 `NODE_ENV=production` **requires** `MONGODB_URI`; the process exits otherwise.
 
-Sprint 0 creates no collections and writes no data.
+Sprint 3 writes `price_snapshots` and `comparison_cache`; Sprint 4 adds `price_daily_rollups` and
+`retention_runs`. All four are created lazily by the API when a database is configured, and
+`ensureModelIndexes()` creates the indexes at boot.
+
+### Retention / compaction
+
+```bash
+npm run retention                 # dry run: generate + verify rollups, delete nothing
+npm run retention -- --apply      # compact eligible days, honouring the env policy
+npm run retention -- --apply --raw-days=30 --rollup-days=365 --batch-size=200
+```
+
+The job needs a real MongoDB: an in-memory store has no durable data to compact, so the CLI exits
+with code `2` when `MONGODB_URI` is empty. Interrupting it (`Ctrl+C`) finishes the current batch,
+records an `aborted` run and exits with code `3`. Run it manually (cron/CI can invoke the same
+command later); nothing schedules it automatically.
 
 ## 6. Running the mobile app
 

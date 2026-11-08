@@ -1,10 +1,12 @@
 import {
+  HISTORY_MAX_ROLLUP_DAYS,
   HISTORY_PERIOD_DAYS,
   demoProducts,
   offerSnapshotSchema,
   type HistoryGroupSummary,
   type HistoryObservation,
   type HistoryPricePoint,
+  type HistoryRollup,
   type HistoryStatus,
   type MarketSource,
   type PriceHistoryQuery,
@@ -13,6 +15,11 @@ import {
 
 import { logger } from '../config/logger.js';
 import { AppError } from '../utils/AppError.js';
+import {
+  rollupStore as sharedRollupStore,
+  type RollupRecord,
+  type RollupStore,
+} from './rollups/index.js';
 import { snapshotStore as sharedSnapshotStore } from './snapshots/index.js';
 import type { SnapshotStore, StoredSnapshot } from './snapshots/snapshotStore.js';
 import { createSourceRegistry } from './sources/registry.js';
@@ -28,6 +35,11 @@ import { createSourceRegistry } from './sources/registry.js';
  * Sample and verified history are summarised separately (`summary.sample` /
  * `summary.verified`) and never merged into one "lowest ever" number. A demo
  * price can therefore never stand in for a verified marketplace price.
+ *
+ * Sprint 4 adds archived daily rollups for days compacted out of raw storage.
+ * They travel in their own `rollups` array, never inside `observations`, because a
+ * day's min/max/first/last is not a point-in-time marketplace price and must not
+ * be plotted or summarised as one.
  */
 
 /** History is reported in the same currency comparisons are ranked in. */
@@ -38,8 +50,36 @@ const CATALOG_ID = 'demo-catalog';
 
 export interface HistoryServiceOptions {
   readonly store?: SnapshotStore;
+  /** Archived daily rollups; defaults to the process-wide store. */
+  readonly rollupStore?: Pick<RollupStore, 'list'>;
   readonly sources?: readonly MarketSource[];
   readonly now?: () => Date;
+}
+
+/** UTC calendar date of an instant; rollups are keyed by day, not by timestamp. */
+function dateKeyOf(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toHistoryRollup(record: RollupRecord, source: MarketSource): HistoryRollup {
+  return {
+    productId: record.productId,
+    sourceId: record.sourceId,
+    marketplaceId: record.marketplaceId,
+    currency: record.currency,
+    date: record.dateKey,
+    minPrice: record.minPrice,
+    maxPrice: record.maxPrice,
+    firstPrice: record.firstPrice,
+    lastPrice: record.lastPrice,
+    observationCount: record.observationCount,
+    availabilityCounts: record.availabilityCounts,
+    sourceVerification: record.sourceVerification,
+    isSample: record.isSample,
+    generatedAt: record.generatedAt.toISOString(),
+    aggregated: true,
+    source,
+  };
 }
 
 export interface HistoryService {
@@ -105,6 +145,7 @@ function toObservation(
 
 export function createHistoryService(options: HistoryServiceOptions = {}): HistoryService {
   const store = options.store ?? sharedSnapshotStore;
+  const rollupStore = options.rollupStore ?? sharedRollupStore;
   const clock = options.now ?? (() => new Date());
   const sources = options.sources ?? createSourceRegistry().sources;
   const sourcesById = new Map(sources.map((source) => [source.id, source]));
@@ -162,25 +203,90 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
         return `${a.marketplaceId}:${a.sourceId}`.localeCompare(`${b.marketplaceId}:${b.sourceId}`);
       });
 
+      // Archived days: only the requested window, filters and currency.
+      const archived = await rollupStore.list({
+        productId,
+        fromDate: dateKeyOf(from),
+        toDate: dateKeyOf(to),
+        ...(query.sourceId ? { sourceId: query.sourceId } : {}),
+        ...(query.marketplaceId ? { marketplaceId: query.marketplaceId } : {}),
+        limit: HISTORY_MAX_ROLLUP_DAYS * 6,
+      });
+
+      const rollups: HistoryRollup[] = [];
+      let rollupsInOtherCurrency = 0;
+      let rollupsFromUnknownSource = 0;
+
+      for (const record of archived) {
+        if (record.currency !== HISTORY_CURRENCY) {
+          rollupsInOtherCurrency += 1;
+          continue;
+        }
+        const source = sourcesById.get(record.sourceId);
+        if (!source) {
+          rollupsFromUnknownSource += 1;
+          continue;
+        }
+        rollups.push(toHistoryRollup(record, source));
+      }
+
+      rollups.sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
+        if (a.marketplaceId !== b.marketplaceId)
+          return a.marketplaceId.localeCompare(b.marketplaceId);
+        return a.sourceId.localeCompare(b.sourceId);
+      });
+
       const verified = observations.filter((observation) => !observation.isSample);
       const sample = observations.filter((observation) => observation.isSample);
+      const rollupVerified = rollups.filter((rollup) => !rollup.isSample);
+      const rollupSample = rollups.filter((rollup) => rollup.isSample);
 
+      // Provenance decides the status even when only aggregates remain, so a fully
+      // compacted window never reads as "no history".
       const status: HistoryStatus =
-        observations.length === 0
-          ? 'no_history'
-          : verified.length > 0 && sample.length > 0
+        observations.length > 0
+          ? verified.length > 0 && sample.length > 0
             ? 'mixed'
             : verified.length > 0
               ? 'verified'
-              : 'sample_only';
+              : 'sample_only'
+          : rollups.length > 0
+            ? rollupVerified.length > 0 && rollupSample.length > 0
+              ? 'mixed'
+              : rollupVerified.length > 0
+                ? 'verified'
+                : 'sample_only'
+            : 'no_history';
 
-      if (observations.length === 0) {
+      if (observations.length === 0 && rollups.length === 0) {
         notices.push(
           `No stored observation for this product in the last ${HISTORY_PERIOD_DAYS[query.period]} days.`,
+        );
+      } else if (observations.length === 0) {
+        notices.push(
+          `Raw observations for this window were compacted; ${rollups.length} archived daily summar${rollups.length === 1 ? 'y is' : 'ies are'} shown instead.`,
         );
       } else {
         notices.push(
           `History covers ${observations.length} stored observation${observations.length === 1 ? '' : 's'} from ${from.toISOString().slice(0, 10)} to ${to.toISOString().slice(0, 10)}.`,
+        );
+      }
+
+      if (rollups.length > 0) {
+        notices.push(
+          'Archived daily summaries are aggregates (min/max/first/last of stored observations) for days no longer kept at full resolution. They are never a point-in-time marketplace price.',
+        );
+      }
+
+      if (rollupsInOtherCurrency > 0) {
+        notices.push(
+          `${rollupsInOtherCurrency} archived summar${rollupsInOtherCurrency === 1 ? 'y was' : 'ies were'} in another currency and ${rollupsInOtherCurrency === 1 ? 'was' : 'were'} excluded; prices are never converted.`,
+        );
+      }
+      if (rollupsFromUnknownSource > 0) {
+        notices.push(
+          `${rollupsFromUnknownSource} archived summar${rollupsFromUnknownSource === 1 ? 'y came' : 'ies came'} from a source that is no longer registered and ${rollupsFromUnknownSource === 1 ? 'was' : 'were'} excluded.`,
         );
       }
 
@@ -244,6 +350,7 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
         generatedAt: now.toISOString(),
         status,
         observations,
+        rollups,
         summary: {
           verified: summarise(verified),
           sample: summarise(sample),
