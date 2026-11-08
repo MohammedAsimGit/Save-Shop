@@ -118,6 +118,7 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
   let productsAccepted = 0;
   let productsInserted = 0;
   let productsExisting = 0;
+  let failedSources = 0;
 
   for (const source of options.sources) {
     try {
@@ -273,16 +274,23 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'unknown error';
+      failedSources += 1;
       options.logger?.error({ err: error, sourceId: source.id }, 'Catalogue source failed');
       warnings.push(`Source ${source.id} could not be read: ${detail}`);
     }
   }
 
+  // A run where every source failed read nothing at all. Reporting it as
+  // `completed` would tell an operator that ingestion ran when nothing was seen,
+  // so it is `failed` (and the CLI exits non-zero). Partial failure stays
+  // `completed` with a warning: the records that were read really were ingested.
+  const allSourcesFailed = options.sources.length > 0 && failedSources === options.sources.length;
+
   const report: IngestionReport = {
     startedAt: startedAt.toISOString(),
     finishedAt: clock().toISOString(),
     dryRun,
-    status: 'completed',
+    status: allSourcesFailed ? 'failed' : 'completed',
     sources: options.sources.map((source) => source.id),
     recordsRead,
     accepted,
@@ -308,6 +316,7 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
 
   options.logger?.info(
     {
+      status: report.status,
       dryRun,
       recordsRead,
       accepted,

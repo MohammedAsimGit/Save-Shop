@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { demoProducts } from '@smart-shopping/shared';
 
+import type { CatalogueSource } from '../src/services/catalogue/catalogueSource.js';
 import {
   ingestCatalogue,
   ingestDemoCatalogue,
@@ -218,5 +219,71 @@ describe('ingestion validation and matching', () => {
     expect(report.matches.conflict).toBe(1);
     expect(await store.listListings('identifier-product', 10)).toHaveLength(0);
     expect(await store.countUnresolvedListings()).toBe(1);
+  });
+});
+
+describe('catalogue ingestion source failures', () => {
+  const unreadable = (id: string): CatalogueSource => ({
+    id,
+    displayName: 'Unreadable source',
+    kind: 'file',
+    provenance: 'manual',
+    isSample: false,
+    trustsCanonicalIds: false,
+    async read() {
+      throw new Error('ENOENT: no such file or directory');
+    },
+  });
+
+  // "Completed" with zero records would tell an operator that ingestion ran when
+  // nothing was read at all, which is exactly the kind of false reassurance the
+  // rest of this project refuses to print.
+  it('marks the run failed when every source is unreadable', async () => {
+    const { store, matcher } = createTestCatalogue();
+
+    const report = await ingestCatalogue({
+      sources: [unreadable('file:missing-a.json'), unreadable('file:missing-b.json')],
+      store,
+      matcher,
+    });
+
+    expect(report.status).toBe('failed');
+    expect(report.recordsRead).toBe(0);
+    expect(report.warnings).toHaveLength(2);
+    expect(report.warnings[0]).toMatch(/could not be read/);
+  });
+
+  it('completes with a warning when only one source fails', async () => {
+    const { store, matcher } = createTestCatalogue();
+
+    const report = await ingestCatalogue({
+      sources: [
+        unreadable('file:missing.json'),
+        makeSource({
+          products: [
+            {
+              id: 'acme-buds',
+              name: 'Acme Buds',
+              brand: 'Acme',
+              category: 'audio',
+              specifications: {},
+              variantOf: null,
+              variantAttributes: {},
+              imageUrls: [],
+              status: 'active',
+              provenance: 'manual',
+              isSample: false,
+            },
+          ],
+          listings: [],
+        }),
+      ],
+      store,
+      matcher,
+    });
+
+    expect(report.status).toBe('completed');
+    expect(report.canonicalProductsInserted).toBe(1);
+    expect(report.warnings.join(' ')).toMatch(/missing\.json/);
   });
 });

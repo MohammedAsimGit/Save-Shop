@@ -38,8 +38,7 @@ marketplace data. Amazon and Flipkart remain disabled descriptors awaiting writt
 | `apps/api/src/controllers/catalogue.controller.ts`           | Search, detail and listings handlers                                             |
 | `apps/api/src/routes/catalogue.routes.ts`                    | `GET /products`, `/products/:id`, `/products/:id/listings` (read-only)           |
 | `apps/api/src/scripts/catalogue.ts`                          | Ingestion CLI: `seed-demo` / `ingest --file=… [--dry-run]`                       |
-| `apps/api/tests/catalogueMatching.test.ts`                   | 12 matcher tests: tiers, conflicts, ambiguity, accessories, generations          |
-| `apps/api/tests/catalogueIngestion.test.ts`                  | 7 ingestion tests: migration, idempotency, rejection, no silent resolution       |
+| `apps/api/tests/catalogueMatching.test.ts`                   | 12 matcher tests: tiers, conflicts, ambiguity, accessories, generations          |     | `apps/api/tests/catalogueIngestion.test.ts` | 9 ingestion tests: migration, idempotency, rejection, no silent resolution, source-failure semantics |
 | `apps/api/tests/catalogueApi.test.ts`                        | 13 API tests: search, filters, paging, detail, listings, error codes             |
 | `apps/api/tests/mongoCatalogue.test.ts`                      | 10 tests against a real MongoDB binary: indexes, dedupe, upserts, seeding        |
 | `apps/api/tests/helpers/catalogue.ts`                        | Shared test fixtures (`createTestCatalogue`, `makeProduct`, `syntheticGtin`)     |
@@ -185,6 +184,10 @@ externalId)` index; unchanged `contentHash` counts as `unchanged`. Re-running th
   nothing (verified below). Canonical products are insert-only — an existing `id` is kept, so
   ingestion can never overwrite curated identity.
 - **Matching** calls the shared matcher; only `exact`/`strong` set `canonicalProductId`.
+- **Failure semantics**: a source that cannot be read is warned about and skipped; when **every**
+  source fails, the run is `failed` and the CLI exits non-zero, because "completed, 0 records" would
+  tell an operator that ingestion ran when nothing was read. A partial failure stays `completed` with
+  a warning.
 - **Reporting**: every run returns counts (records read/accepted/rejected, created/updated/unchanged,
   products inserted/existing, matches by status) and is recorded in `catalogue_ingestion_runs`
   (`status`, `sources`, counts, duration, notes); a failure to write the audit row never fails the
@@ -229,15 +232,13 @@ Unknown query values are `400 VALIDATION_ERROR`; unknown products are `404 NOT_F
 
 Run from the repository root on 2026-11-08 (`npm run verify`, then `npm run build`):
 
-| Suite     | Files  | Tests   | Result   |
-| --------- | ------ | ------- | -------- |
-| API       | 17     | 175     | pass     |
-| Shared    | 4      | 34      | pass     |
-| Web       | 1      | 16      | pass     |
-| Mobile    | 6      | 19      | pass     |
-| **Total** | **28** | **244** | **pass** |
+| Suite | Files | Tests | Result |
+| --------- | ------ | ------- | -------- || API | 17 | 177 | pass |
+| Shared | 4 | 34 | pass |
+| Web | 1 | 16 | pass |
+| Mobile | 6 | 19 | pass || **Total**| **28**| **246** | **pass** |
 
-New coverage in this sprint: 12 matcher tests, 7 ingestion tests, 13 catalogue API tests, 10 MongoDB
+New coverage in this sprint: 12 matcher tests, 9 ingestion tests, 13 catalogue API tests, 10 MongoDB
 catalogue tests, 11 shared normalisation tests, 3 web tests, 4 mobile contract-drift tests and 2
 mobile identity-component tests. Typecheck (`tsc` for shared/api/web/mobile) and `eslint .` are clean.
 `npm run build` produces the API build and the web bundle (521 kB JS / 156 kB gzip; Vite warns about
@@ -261,8 +262,8 @@ Verified against a real local `mongod` (127.0.0.1:27017) using a throwaway datab
 | GTIN normalisation in MongoDB             | stored as `04006381333931` (14 digits, valid check digit)                                                                                        |
 | Resolution gate                           | only the GTIN listing resolved; the accessory (`conflict`) and similar-title (`possible`) listings stayed unresolved, `canonicalProductId: null` |
 | Product detail after ingestion            | `total: 1`, `resolved: 1`, `unresolved: 0`, notice "2 listing(s) … await review"                                                                 |
-| Comparison for a catalogue-only product   | `200`, `status: "no_offers"`, 0 offers — no price borrowed from another product                                                                  |
-| Re-running the identical ingest           | `created: 0`, `updated: 0`, `unchanged: 3`, `canonicalProductsExisting: 1`                                                                       |
+| Comparison for a catalogue-only product   | `200`, `status: "no_offers"`, 0 offers — no price borrowed from another product                                                                  |     | Re-running the identical ingest | `created: 0`, `updated: 0`, `unchanged: 3`, `canonicalProductsExisting: 1` |
+| Ingest with an unreadable file            | report `status: "failed"`, 0 records, warning naming the missing path, process exit `1`                                                          |
 | Cleanup                                   | API stopped, ingestion fixture removed, verification database dropped                                                                            |
 
 The Mongo integration suites (`mongoCatalogue.test.ts`, 10 tests) also run against a real `mongod`

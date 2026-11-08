@@ -92,19 +92,19 @@ Full environment guide: [docs/ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md).
 
 Run from the repository root.
 
-| Command                | Purpose                                            |
-| ---------------------- | -------------------------------------------------- |
-| `npm run dev:api`      | API with hot reload on port 4000                   |
-| `npm run dev:web`      | Vite dev server on port 5173                       |
-| `npm run dev:mobile`   | Expo dev server                                    |
-| `npm run build:shared` | Compile `packages/shared` to `dist/`               |
-| `npm run build`        | Build shared → API → web                           |
-| `npm run typecheck`    | Build shared, then typecheck every workspace       |
-| `npm run lint`         | ESLint (flat config) across the monorepo           |
-| `npm run format`       | Prettier write (`format:check` to verify only)     |
-| `npm run test`         | Build shared, then run every workspace's tests     |
-| `npm run verify`       | typecheck + lint + test — the pre-push gate        |
-| `npm run retention`    | Compaction job (dry run by default; needs MongoDB) |
+| Command                | Purpose                                                   |
+| ---------------------- | --------------------------------------------------------- |
+| `npm run dev:api`      | API with hot reload on port 4000                          |
+| `npm run dev:web`      | Vite dev server on port 5173                              |
+| `npm run dev:mobile`   | Expo dev server                                           |
+| `npm run build:shared` | Compile `packages/shared` to `dist/`                      |
+| `npm run build`        | Build shared → API → web                                  |
+| `npm run typecheck`    | Build shared, then typecheck every workspace              |
+| `npm run lint`         | ESLint (flat config) across the monorepo                  |
+| `npm run format`       | Prettier write (`format:check` to verify only)            |
+| `npm run test`         | Build shared, then run every workspace's tests            |
+| `npm run verify`       | typecheck + lint + test — the pre-push gate               |
+| `npm run retention`    | Compaction job (dry run by default; needs MongoDB)        |
 | `npm run catalogue`    | Catalogue ingestion CLI (dry run optional; needs MongoDB) |
 
 Tests: Vitest for `shared`, `api` and `web`; `jest-expo` for `mobile`.
@@ -143,6 +143,8 @@ The JSON file shape is `{ "products": [...], "listings": [...] }`. Products are 
 (id, name, brand, category, optional model/mpn/gtin, specifications, variants); listings are what a
 source reports (marketplace id, external id, title, URL, optional identifiers). Every record is
 validated, invalid records are reported with a reason, and re-running the same file changes nothing.
+A run where every source is unreadable is reported as `failed` and exits non-zero, so CI cannot
+mistake "read nothing" for "ingested successfully".
 
 Matching is deterministic, in this order: canonical id from a trusted catalogue source → GTIN →
 manufacturer part number → brand + model → brand + model + variant attributes → brand + title
@@ -182,23 +184,23 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 
 ## Documentation
 
-| Document                                                        | Contents                                                |
-| --------------------------------------------------------------- | ------------------------------------------------------- |
-| [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)                 | Problem, objective, scope, honest status                |
-| [REQUIREMENTS.md](docs/REQUIREMENTS.md)                         | Delivered foundation vs. planned product requirements   |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                         | Layer boundaries, request lifecycle, decisions          |
-| [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md)                 | Where every kind of file belongs                        |
+| Document                                                        | Contents                                                  |
+| --------------------------------------------------------------- | --------------------------------------------------------- |
+| [PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)                 | Problem, objective, scope, honest status                  |
+| [REQUIREMENTS.md](docs/REQUIREMENTS.md)                         | Delivered foundation vs. planned product requirements     |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                         | Layer boundaries, request lifecycle, decisions            |
+| [FOLDER_STRUCTURE.md](docs/FOLDER_STRUCTURE.md)                 | Where every kind of file belongs                          |
 | [API_CONTRACTS.md](docs/API_CONTRACTS.md)                       | Envelope, errors, comparison, history, catalogue, sources |
-| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Catalogue, snapshot, cache, rollup and retention schemas |
-| [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints |
-| [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup        |
-| [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                    |
-| [SPRINT_5_REPORT.md](docs/SPRINT_5_REPORT.md)                   | Sprint 5 catalogue, identity matching, ingestion, gates |
-| [SPRINT_4_REPORT.md](docs/SPRINT_4_REPORT.md)                   | Sprint 4 retention policy, rollups, job, gates, limits  |
-| [SPRINT_3_REPORT.md](docs/SPRINT_3_REPORT.md)                   | Sprint 3 persistence, history API, cache, gates, limits |
-| [SPRINT_2_REPORT.md](docs/SPRINT_2_REPORT.md)                   | Sprint 2 engine, adapters, endpoints, gates, limits     |
-| [SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md)                   | Sprint 1 screens, components, gates, known issues       |
-| [INGESTION_FEASIBILITY.md](docs/INGESTION_FEASIBILITY.md)       | Amazon/Flipkart data access, provider costs, GO / NO-GO |
+| [DATABASE_DESIGN.md](docs/DATABASE_DESIGN.md)                   | Catalogue, snapshot, cache, rollup and retention schemas  |
+| [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints   |
+| [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup          |
+| [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                      |
+| [SPRINT_5_REPORT.md](docs/SPRINT_5_REPORT.md)                   | Sprint 5 catalogue, identity matching, ingestion, gates   |
+| [SPRINT_4_REPORT.md](docs/SPRINT_4_REPORT.md)                   | Sprint 4 retention policy, rollups, job, gates, limits    |
+| [SPRINT_3_REPORT.md](docs/SPRINT_3_REPORT.md)                   | Sprint 3 persistence, history API, cache, gates, limits   |
+| [SPRINT_2_REPORT.md](docs/SPRINT_2_REPORT.md)                   | Sprint 2 engine, adapters, endpoints, gates, limits       |
+| [SPRINT_1_REPORT.md](docs/SPRINT_1_REPORT.md)                   | Sprint 1 screens, components, gates, known issues         |
+| [INGESTION_FEASIBILITY.md](docs/INGESTION_FEASIBILITY.md)       | Amazon/Flipkart data access, provider costs, GO / NO-GO   |
 
 ## Known constraints
 

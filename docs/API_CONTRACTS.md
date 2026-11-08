@@ -331,15 +331,15 @@ Canonical catalogue search. Returns **products**, never marketplace listings.
 
 Query parameters (all validated with Zod; unknown values are a `400`):
 
-| Parameter            | Type                    | Default    | Notes                                                    |
-| -------------------- | ----------------------- | ---------- | -------------------------------------------------------- |
-| `q`                  | string (≤ 120)          | –          | Matched against name, brand, model, id and identifiers     |
-| `brand`              | string (≤ 80)           | –          | Exact brand key filter                                    |
-| `category`           | slug                    | –          | e.g. `audio`, `phones`                                    |
-| `model`              | string (≤ 40)           | –          | Reserved; currently reported back in `query`              |
-| `status`             | `active`/`draft`/`archived` | `active` | Archived products are excluded by default             |
-| `page`               | integer 1–500           | `1`        | 1-based                                                    |
-| `pageSize`           | integer 1–48            | `12`       | Maximum page size                                          |
+| Parameter  | Type                        | Default  | Notes                                                  |
+| ---------- | --------------------------- | -------- | ------------------------------------------------------ |
+| `q`        | string (≤ 120)              | –        | Matched against name, brand, model, id and identifiers |
+| `brand`    | string (≤ 80)               | –        | Exact brand key filter                                 |
+| `category` | slug                        | –        | e.g. `audio`, `phones`                                 |
+| `model`    | string (≤ 40)               | –        | Reserved; currently reported back in `query`           |
+| `status`   | `active`/`draft`/`archived` | `active` | Archived products are excluded by default              |
+| `page`     | integer 1–500               | `1`      | 1-based                                                |
+| `pageSize` | integer 1–48                | `12`     | Maximum page size                                      |
 
 ```json
 {
@@ -435,8 +435,16 @@ verdict. Storage-only fields (`contentHash`) are never returned.
         "updatedAt": "2026-11-08T07:00:00.000Z"
       }
     ],
-    "listingSummary": { "total": 1, "resolved": 1, "unresolved": 0, "requiresReview": 0, "byStatus": { "exact": 1, "strong": 0, "possible": 0, "unmatched": 0, "conflict": 0 } },
-    "notices": ["A listing is one marketplace's item. Only exact and strong matches are resolved; possible and conflicting matches stay unresolved until reviewed."]
+    "listingSummary": {
+      "total": 1,
+      "resolved": 1,
+      "unresolved": 0,
+      "requiresReview": 0,
+      "byStatus": { "exact": 1, "strong": 0, "possible": 0, "unmatched": 0, "conflict": 0 }
+    },
+    "notices": [
+      "A listing is one marketplace's item. Only exact and strong matches are resolved; possible and conflicting matches stay unresolved until reviewed."
+    ]
   }
 }
 ```
@@ -458,6 +466,10 @@ npm run catalogue -- ingest --file=catalogue.json [--dry-run]
 
 A future authorised provider gets an adapter behind the same service, and the endpoint question is
 revisited only once admin authorisation exists.
+
+The CLI prints the ingestion report as JSON and exits `1` when the run is `failed` — which happens
+when **every** source could not be read. A partial failure (one source unreadable, another fine)
+stays `completed` with a warning, because the records that were read really were ingested.
 
 ## 11. Other endpoints
 
