@@ -79,6 +79,13 @@ export const canonicalProductSchema = z.object({
   provenance: catalogueProvenanceSchema,
   /** True for records that came from the sample catalogue; never "verified". */
   isSample: z.boolean(),
+  /**
+   * Set when an administrator merged this record into another product. The record
+   * is kept (never deleted) as a redirect, so old links and old decisions keep
+   * resolving; reads follow the redirect one hop at a time.
+   */
+  mergedInto: catalogueProductIdSchema.nullable().default(null),
+  mergedAt: isoDateTimeSchema.nullable().default(null),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
 });
@@ -126,6 +133,45 @@ export const listingMatchSchema = z.object({
 
 export type ListingMatch = z.infer<typeof listingMatchSchema>;
 
+/**
+ * Version of the deterministic matching rules. Recorded on every human decision so
+ * "reviewed under which rules?" is answerable after the matcher changes.
+ */
+export const CATALOGUE_MATCHER_VERSION = 'catalogue-matcher/1';
+
+/**
+ * An administrator's decision about one listing (Sprint 6).
+ *
+ * `accepted` and `reassigned` resolve the listing to a canonical product;
+ * `rejected` keeps it unresolved and remembers which candidate was refused, so the
+ * matcher cannot silently propose that candidate again; `deferred` is an explicit
+ * "still unresolved, here is why". `reopened` returns the listing to the automatic
+ * matcher after an explicit administrative reset.
+ */
+export const reviewDecisionTypeSchema = z.enum([
+  'accepted',
+  'rejected',
+  'reassigned',
+  'deferred',
+  'reopened',
+]);
+export type ReviewDecisionType = z.infer<typeof reviewDecisionTypeSchema>;
+
+export const listingReviewSchema = z.object({
+  decision: reviewDecisionTypeSchema,
+  /** Administrator id; the email lives in the append-only decision record. */
+  decidedBy: z.string().min(1).max(60),
+  decidedAt: isoDateTimeSchema,
+  reason: z.string().min(1).max(240),
+  notes: z.string().max(1000).nullable().default(null),
+  previousStatus: matchStatusSchema,
+  previousCanonicalProductId: catalogueProductIdSchema.nullable().default(null),
+  /** Candidates a human refused; never proposed automatically again. */
+  rejectedProductIds: z.array(catalogueProductIdSchema).max(20).default([]),
+  matcherVersion: z.string().min(1).max(40),
+});
+export type ListingReview = z.infer<typeof listingReviewSchema>;
+
 /** What one marketplace says about one item. Never the product itself. */
 export const marketplaceListingSchema = z.object({
   /** Deterministic key: hash of source + marketplace + the source's own id. */
@@ -150,6 +196,10 @@ export const marketplaceListingSchema = z.object({
   provenance: catalogueProvenanceSchema,
   isSample: z.boolean(),
   match: listingMatchSchema,
+  /** Optimistic concurrency token; every administrative decision increments it. */
+  revision: z.number().int().min(0).default(0),
+  /** Null until an administrator decides; when set it outranks the matcher. */
+  review: listingReviewSchema.nullable().default(null),
   lastObservedAt: isoDateTimeSchema,
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,

@@ -13,6 +13,7 @@ import type { Logger } from 'pino';
 import {
   catalogueRecordSchema,
   type CanonicalProductInput,
+  type CatalogueRecord,
   type CatalogueSource,
 } from './catalogueSource.js';
 import {
@@ -56,6 +57,8 @@ export interface IngestionReport {
   readonly created: number;
   readonly updated: number;
   readonly unchanged: number;
+  /** Listings whose existing human decision was preserved, not overwritten. */
+  readonly respectedHumanDecisions: number;
   readonly canonicalProductsAccepted: number;
   readonly canonicalProductsInserted: number;
   readonly canonicalProductsExisting: number;
@@ -97,6 +100,9 @@ function toCanonicalProduct(input: CanonicalProductInput, timestamp: Date): Cano
     ...(mpn ? { mpn } : {}),
     ...(color ? { color } : {}),
     ...(storageCapacity ? { storageCapacity } : {}),
+    // Merge state is owned by the administration workflow, never by a source.
+    mergedInto: null,
+    mergedAt: null,
     createdAt,
     updatedAt: createdAt,
   };
@@ -119,6 +125,7 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
   let productsInserted = 0;
   let productsExisting = 0;
   let failedSources = 0;
+  let respectedHumanDecisions = 0;
 
   for (const source of options.sources) {
     try {
@@ -139,6 +146,7 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
 
       const listings: StoredListing[] = [];
 
+      const parsedRecords: { readonly index: number; readonly record: CatalogueRecord }[] = [];
       for (const [index, raw] of result.listings.entries()) {
         const parsed = catalogueRecordSchema.safeParse(raw);
         if (!parsed.success) {
@@ -152,9 +160,40 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
           });
           continue;
         }
+        parsedRecords.push({ index, record: parsed.data });
+      }
 
+      // Existing rows are read in one batch so a human decision can be honoured
+      // before the matcher runs; a dry run writes nothing and needs no lookup.
+      const priorById = new Map<string, StoredListing>();
+      if (!dryRun && parsedRecords.length > 0) {
+        const ids = parsedRecords.map(({ record }) =>
+          listingKey({
+            sourceId: source.id,
+            marketplaceId: record.marketplaceId,
+            externalId: record.externalId,
+          }),
+        );
+        for (const prior of await options.store.findListingsByIds(ids)) {
+          priorById.set(prior.id, prior);
+        }
+      }
+
+      for (const { index, record } of parsedRecords) {
         recordsRead += 1;
-        const record = parsed.data;
+
+        const listingId = listingKey({
+          sourceId: source.id,
+          marketplaceId: record.marketplaceId,
+          externalId: record.externalId,
+        });
+        const prior = priorById.get(listingId) ?? null;
+        // A decision by a person outranks the matcher until an administrator
+        // explicitly reopens the listing.
+        const humanDecision =
+          prior !== null && prior.review !== null && prior.review.decision !== 'reopened'
+            ? prior
+            : null;
 
         try {
           // Tier 0: an identity claim from a source that owns the catalogue. It is
@@ -162,7 +201,17 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
           const claimedId = source.trustsCanonicalIds ? record.canonicalProductId : undefined;
           let match: MatchDecision;
 
-          if (claimedId) {
+          if (humanDecision) {
+            match = {
+              status: humanDecision.match.status,
+              method: humanDecision.match.method,
+              confidence: humanDecision.match.confidence,
+              requiresReview: humanDecision.match.requiresReview,
+              reasons: [...humanDecision.match.reasons],
+              canonicalProductId: humanDecision.canonicalProductId,
+            };
+            respectedHumanDecisions += 1;
+          } else if (claimedId) {
             const claimed =
               (await options.store.findProduct(claimedId)) ??
               declaredProducts.get(claimedId) ??
@@ -199,15 +248,23 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
                   canonicalProductId: claimed.id,
                 };
           } else {
-            match = await options.matcher.match({
-              title: record.title,
-              ...(record.brand ? { brand: record.brand } : {}),
-              ...(record.model ? { model: record.model } : {}),
-              ...(record.mpn ? { mpn: record.mpn } : {}),
-              ...(record.gtin ? { gtin: record.gtin } : {}),
-              ...(record.color ? { color: record.color } : {}),
-              ...(record.storageCapacity ? { storageCapacity: record.storageCapacity } : {}),
-            });
+            match = await options.matcher.match(
+              {
+                title: record.title,
+                ...(record.brand ? { brand: record.brand } : {}),
+                ...(record.model ? { model: record.model } : {}),
+                ...(record.mpn ? { mpn: record.mpn } : {}),
+                ...(record.gtin ? { gtin: record.gtin } : {}),
+                ...(record.color ? { color: record.color } : {}),
+                ...(record.storageCapacity ? { storageCapacity: record.storageCapacity } : {}),
+              },
+              // A candidate a human refused is never proposed automatically again.
+              {
+                ...(prior?.review && prior.review.rejectedProductIds.length > 0
+                  ? { excludeIds: prior.review.rejectedProductIds }
+                  : {}),
+              },
+            );
           }
 
           matches[match.status] += 1;
@@ -222,11 +279,7 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
             : undefined;
 
           const base: Omit<StoredListing, 'contentHash'> = {
-            id: listingKey({
-              sourceId: source.id,
-              marketplaceId: record.marketplaceId,
-              externalId: record.externalId,
-            }),
+            id: listingId,
             canonicalProductId: match.canonicalProductId,
             sourceId: source.id,
             marketplaceId: record.marketplaceId,
@@ -250,6 +303,8 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
               requiresReview: match.requiresReview,
               reasons: [...match.reasons],
             },
+            revision: prior?.revision ?? 0,
+            review: humanDecision?.review ?? null,
             lastObservedAt: record.lastObservedAt ?? nowIso,
             createdAt: nowIso,
             updatedAt: nowIso,
@@ -302,6 +357,8 @@ export async function ingestCatalogue(options: IngestCatalogueOptions): Promise<
     canonicalProductsInserted: productsInserted,
     canonicalProductsExisting: productsExisting,
     matches,
+    /** Listings whose administrative decision was preserved instead of re-matched. */
+    respectedHumanDecisions,
     rejectedRecords,
     warnings: [...new Set(warnings)],
   };

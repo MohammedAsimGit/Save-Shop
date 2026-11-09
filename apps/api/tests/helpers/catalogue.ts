@@ -37,6 +37,8 @@ export function makeProduct(
     status: 'active',
     provenance: 'manual',
     isSample: false,
+    mergedInto: null,
+    mergedAt: null,
     createdAt: FIXED_TIME,
     updatedAt: FIXED_TIME,
     ...overrides,

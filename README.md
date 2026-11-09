@@ -106,6 +106,7 @@ Run from the repository root.
 | `npm run verify`       | typecheck + lint + test — the pre-push gate               |
 | `npm run retention`    | Compaction job (dry run by default; needs MongoDB)        |
 | `npm run catalogue`    | Catalogue ingestion CLI (dry run optional; needs MongoDB) |
+| `npm run admin`        | Administrator provisioning, audit and merge recovery      |
 
 Tests: Vitest for `shared`, `api` and `web`; `jest-expo` for `mobile`.
 
@@ -154,6 +155,35 @@ that table, never a probability. There is **no public ingestion endpoint**: the 
 authentication yet, so ingestion is a local CLI operation. See
 [API_CONTRACTS.md](docs/API_CONTRACTS.md#10-catalogue-ingestion--deliberately-not-an-http-endpoint).
 
+### Catalogue administration (Sprint 6)
+
+Catalogue review is staff-only and requires MongoDB: accounts must be durable, so the CLI refuses
+to provision into the in-memory development store.
+
+```bash
+npm run admin -- provision --email=ops@example.com --name="Operations"
+npm run admin -- list
+npm run admin -- disable --email=ops@example.com --reason="left the team"
+npm run admin -- reset-password --email=ops@example.com
+npm run admin -- audit --limit=50
+npm run admin -- repair-merges
+```
+
+The password is prompted with echo disabled (or piped / supplied through
+`ADMIN_PROVISION_PASSWORD`); it is never a command-line flag. In production set a real
+`ADMIN_JWT_SECRET` (32+ characters); outside production a random per-process secret is generated.
+Sessions are HS256 JWTs, verified on every request **and** resolved against `admin_users`, so a
+disabled account or password reset revokes existing tokens immediately. There is no default
+administrator and no account-creation endpoint.
+
+The signed-in review workspace is at `/admin` in the web app: pending queue with filters and
+pagination, full listing identity and conflicts, candidate products, accept / reject / reassign /
+defer / reopen with confirmation dialogs and required reasons, and the decision and audit history.
+The UI gate is convenience only; authorisation is enforced by the API.
+
+See [docs/ADMIN_SETUP.md](docs/ADMIN_SETUP.md) for provisioning, security limitations, merge and
+recovery procedure, and the incident checklist.
+
 ### If `npm run` hangs on Windows
 
 Some restricted shells (sandboxed or heavily locked-down terminals) cannot spawn `cmd.exe`, which
@@ -195,6 +225,8 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 | [MARKETPLACE_INTEGRATIONS.md](docs/MARKETPLACE_INTEGRATIONS.md) | Access status per provider, legal/technical constraints   |
 | [ENVIRONMENT_SETUP.md](docs/ENVIRONMENT_SETUP.md)               | Install, env files, MongoDB, mobile device setup          |
 | [DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md)     | Coding, testing and review standards                      |
+| [ADMIN_SETUP.md](docs/ADMIN_SETUP.md)                           | Admin provisioning, auth, review, merge, recovery, limits |
+| [SPRINT_6_REPORT.md](docs/SPRINT_6_REPORT.md)                   | Sprint 6 admin workflow, decisions, merges, verification  |
 | [SPRINT_5_REPORT.md](docs/SPRINT_5_REPORT.md)                   | Sprint 5 catalogue, identity matching, ingestion, gates   |
 | [SPRINT_4_REPORT.md](docs/SPRINT_4_REPORT.md)                   | Sprint 4 retention policy, rollups, job, gates, limits    |
 | [SPRINT_3_REPORT.md](docs/SPRINT_3_REPORT.md)                   | Sprint 3 persistence, history API, cache, gates, limits   |
@@ -211,8 +243,13 @@ See [docs/DEVELOPMENT_GUIDELINES.md](docs/DEVELOPMENT_GUIDELINES.md).
 - **The catalogue is sample data.** Identity now has a real model, matcher and ingestion pipeline,
   but the only sources are the shared sample catalogue and a local JSON file. No marketplace
   catalogue feed is connected, so `provenance` is `demo` or `manual` for every record in the app.
-- **Unresolved matches have no review workflow.** `possible`/`conflict` listings are stored and
-  reported but a human cannot resolve them from the UI yet; nothing hidden is silently compared.
+- **Admin authentication is separate from shopper authentication.** Review and merge operations
+  require a live `catalogue_admin` account; customer sign-in is still not implemented.
+- **Merges have no UI and no automatic un-merge.** They are audited, transactional where MongoDB
+  supports it, and recoverable through `npm run admin -- repair-merges`, but a wrong merge is
+  restored from backup rather than reversed in place.
+- **No distributed throttling or MFA for administrators.** The login throttle is per process and a
+  password is the only factor; see the limitations in [docs/ADMIN_SETUP.md](docs/ADMIN_SETUP.md).
 - **History contains demo observations, not marketplace history.** Sample rows are stored only
   outside production, always marked `isSample`, and summarised separately from verified data.
 - **Compaction is a manual job, not a scheduler.** Nothing runs automatically; the policy windows

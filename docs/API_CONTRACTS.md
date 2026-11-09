@@ -15,7 +15,7 @@ exist today; the envelope and conventions below apply to every future endpoint.
 | Validation    | Zod at the API boundary; failures return `400 VALIDATION_ERROR` with field messages                                                   |
 | Timestamps    | ISO 8601 UTC strings (`2026-11-05T09:30:00.000Z`)                                                                                     |
 | Money         | `{ "amountMinor": 129900, "currency": "INR" }` — integers only                                                                        |
-| Auth          | Not implemented. When added, `Authorization: Bearer <firebase-id-token>`                                                              |
+| Auth          | Shopper auth is not implemented. `/admin/**` (except login) requires `Authorization: Bearer <admin-jwt>`; see §14.                    |
 
 Clients must branch on `error.code`, never on `message` text.
 
@@ -487,7 +487,6 @@ Listed only so the contract can be designed coherently later. Definitions, field
 codes are not final and must not be relied upon.
 
 - `GET /products/:id/variants` — expanded variant listing (variants are currently rows with `variantOf`)
-- `GET /catalogue/review` — the unresolved-listing queue (needs admin authorisation)
 - `GET|POST|DELETE /wishlist`
 - `POST /auth/session` — verify a Firebase token (design undecided)
 - `GET /me/subscription`
@@ -507,3 +506,189 @@ Both clients implement the same rules in `src/services/apiClient.ts`:
   wrong price or a false product identity;
 - catalogue search falls back to the local sample catalogue only when the API is unreachable, and
   says so on screen: searching a different catalogue silently would be misleading.
+
+## 14. Admin authentication
+
+Admin routes live under `/api/v1/admin`. The only public route is login; everything else requires a
+bearer token that the API verifies **and** resolves to a live, active `catalogue_admin` account.
+
+| Method | Path                | Body                  | Notes                                                      |
+| ------ | ------------------- | --------------------- | ---------------------------------------------------------- |
+| `POST` | `/admin/auth/login` | `{ email, password }` | 200 with a session, 401 `UNAUTHORIZED`, 429 `RATE_LIMITED` |
+| `GET`  | `/admin/auth/me`    | —                     | current credential-free profile                            |
+
+`POST /admin/auth/login` → `{ "data": { "token", "tokenType": "Bearer", "expiresAt", "admin" } }`.
+`admin` is `{ id, email, displayName, role, status, createdAt, lastLoginAt }`; no hash or session
+secret is ever returned. Responses carry `Cache-Control: no-store`.
+
+Failures are deliberately indistinguishable: unknown email, wrong password and disabled account all
+return `401` with `Invalid email or password`. Repeated failures return `429`. A stale token, a
+token for a disabled account, a token whose `tokenVersion` was bumped, and a non-admin role all
+return `401`.
+
+## 15. `GET /api/v1/admin/catalogue/review-queue`
+
+Auth: `catalogue_admin`. Query (Zod-validated, all optional except defaults):
+
+| Parameter            | Default   | Bounds                                                         |
+| -------------------- | --------- | -------------------------------------------------------------- |
+| `scope`              | `pending` | `pending` \| `decided` \| `all`                                |
+| `verdict`            | —         | `exact` \| `strong` \| `possible` \| `unmatched` \| `conflict` |
+| `sourceId`           | —         | max 80 chars                                                   |
+| `marketplaceId`      | —         | max 80 chars                                                   |
+| `canonicalProductId` | —         | catalogue slug                                                 |
+| `q`                  | —         | max 120 chars; title, brand, model, external id, id            |
+| `sort`               | `oldest`  | `oldest` \| `newest` \| `confidence_asc` \| `confidence_desc`  |
+| `page`               | `1`       | 1–500                                                          |
+| `pageSize`           | `20`      | 1–50                                                           |
+
+`pending` means the listing has no settled human decision and is unresolved or flagged. Response:
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "listing": { "...": "full MarketplaceListing contract" },
+        "candidates": [
+          {
+            "productId": "sony-wh1000xm5",
+            "name": "…",
+            "brand": "Sony",
+            "category": "audio",
+            "status": "possible",
+            "method": "title_similarity",
+            "confidence": 72,
+            "reasons": ["title similarity 0.86 with the same brand"],
+            "isSample": true,
+            "mergedInto": null
+          }
+        ],
+        "conflicts": ["different GTIN for the same candidate"],
+        "reviewRequiredReason": "The automatic matcher found more than one plausible product; a human must choose.",
+        "pending": true
+      }
+    ],
+    "page": 1,
+    "pageSize": 20,
+    "totalItems": 1,
+    "counts": {
+      "pending": 1,
+      "decided": 0,
+      "requiresReview": 1,
+      "byVerdict": { "exact": 0, "strong": 0, "possible": 1, "unmatched": 0, "conflict": 0 }
+    },
+    "notices": [
+      "Matching strength is a deterministic 0-100 score from documented identity rules, not a probability."
+    ]
+  },
+  "meta": { "requestId": "…", "page": 1, "pageSize": 20, "totalItems": 1 }
+}
+```
+
+At most five candidates per item. `confidence` is a strength score, never a probability.
+
+## 16. `GET /api/v1/admin/catalogue/listings/:listingId`
+
+Returns `{ item, decisions, audit, notices }`: the queue item, the append-only decision history
+(newest data in `decisions`) and up to 20 audit events for the listing. Unknown id → `404`.
+
+## 17. Review decisions
+
+All four decision routes require `expectedRevision` (the listing's current `revision`), a `reason`
+(3–240 characters) and optional `notes` (≤1000). A stale revision → `409 CONFLICT` with the current
+revision in `details`; reload and retry.
+
+| Method | Path                                     | Body                                                                         |
+| ------ | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `POST` | `/admin/catalogue/listings/:id/accept`   | `{ canonicalProductId, confirmConflicts, expectedRevision, reason, notes? }` |
+| `POST` | `/admin/catalogue/listings/:id/reassign` | same shape as accept                                                         |
+| `POST` | `/admin/catalogue/listings/:id/reject`   | `{ canonicalProductId?, expectedRevision, reason, notes? }`                  |
+| `POST` | `/admin/catalogue/listings/:id/defer`    | `{ expectedRevision, reason, notes? }`                                       |
+| `POST` | `/admin/catalogue/listings/:id/reopen`   | `{ expectedRevision, reason, notes? }`                                       |
+
+- Accept/reassign validate that the product exists, is not archived and is not itself merged.
+  Contradicting GTIN/MPN/model/generation/capacity/colour/variant facts return `409` unless
+  `confirmConflicts: true`; the acknowledgement is recorded.
+- Reject keeps the listing, leaves it unresolved and stores the refused candidate in
+  `review.rejectedProductIds`, so the matcher will not propose it again until a reopen.
+- Defer keeps the listing in the queue with the note.
+- Reopen re-runs the automatic matcher, clears previous refusals and records a `reopened` decision.
+
+Response:
+
+```json
+{
+  "data": {
+    "listing": { "...": "MarketplaceListing with review, revision + 1" },
+    "decision": {
+      "id": "...",
+      "decision": "accepted",
+      "previousStatus": "possible",
+      "previousCanonicalProductId": null,
+      "newCanonicalProductId": "sony-wh1000xm5",
+      "adminId": "...",
+      "adminEmail": "...",
+      "reason": "...",
+      "notes": null,
+      "identityFacts": { "brand": "Sony", "...": "..." },
+      "matcherVersion": "catalogue-matcher/1",
+      "requestId": "...",
+      "listingRevision": 1,
+      "decidedAt": "2026-11-09T10:00:00.000Z"
+    },
+    "acknowledgedConflicts": [],
+    "notices": ["The match was approved and now outranks the automatic matcher."]
+  }
+}
+```
+
+Unknown listing/product → `404`; stale revision or blocked conflicts → `409`.
+
+## 18. Canonical product merge
+
+`GET /api/v1/admin/catalogue/merge-preview?sourceProductId=…&targetProductId=…`
+
+```json
+{
+  "data": {
+    "sourceProductId": "duplicate-product",
+    "targetProductId": "surviving-product",
+    "compatible": true,
+    "blockers": [],
+    "conflicts": [],
+    "summary": { "listings": 1, "snapshots": 2, "rollups": 1, "variants": 0 },
+    "notices": [
+      "The source product is archived, not deleted, and remains resolvable as a redirect."
+    ]
+  }
+}
+```
+
+`POST /api/v1/admin/catalogue/products/merge` with
+`{ sourceProductId, targetProductId, reason, notes?, confirmConflicts? }`.
+
+Blockers (`409`, cannot be overridden): self-merge, unknown product, source already merged, source
+archived without a merge target, archived target, target is a variant of the source, different brand
+or category. Conflicts (`409` unless `confirmConflicts: true`): differing GTIN/MPN/model/colour/
+capacity, generation mismatch, variant-attribute differences, sample/verified or provenance
+mismatch.
+
+Response: `{ mergeRunId, status, sourceProductId, targetProductId, transactionUsed, listingsMoved,
+snapshotsMoved, snapshotsDeduped, rollupsMoved, rollupsCombined, variantsRepointed,
+acknowledgedConflicts, notices }`. If a step fails, the API returns `500`, the run remains open, and
+`npm run admin -- repair-merges` completes or fails it safely. MongoDB transactions are used only
+when the server supports them; `transactionUsed` reports what actually happened.
+
+## 19. `GET /api/v1/admin/catalogue/audit`
+
+Auth: `catalogue_admin`. Query: `action` (enum), `actorId`, `targetId`, `page` (1-500, default 1),
+`pageSize` (1-100, default 20). Returns `{ events, page, pageSize, totalItems }`, newest first.
+Each event is `{ id, action, actorId, actorEmail, targetType, targetId, previousState, newState,
+reason, requestId, occurredAt }`; states contain only non-secret fields.
+
+## 20. Admin caching and errors
+
+Every admin response sets `Cache-Control: no-store` and `Vary: Authorization`. `401` always means
+the session is not (or no longer) valid; the web client clears its stored token and shows the gate.
+`403` is unused in this sprint because there is one admin role, but the error code remains defined.

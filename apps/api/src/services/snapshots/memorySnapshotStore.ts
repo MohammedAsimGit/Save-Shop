@@ -1,4 +1,5 @@
 import {
+  observationKey,
   prepareSnapshotRecords,
   selectHistoryRecords,
   toStoredSnapshot,
@@ -118,6 +119,43 @@ export function createMemorySnapshotStore(seed: readonly SnapshotRecord[] = []):
         if (capturedMs >= fromMs && capturedMs < toMs) count += 1;
       }
       return count;
+    },
+
+    async mergeProduct(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+    }): Promise<{ moved: number; deduped: number }> {
+      let moved = 0;
+      let deduped = 0;
+
+      for (const [key, record] of [...records.entries()]) {
+        if (record.productId !== options.sourceProductId) continue;
+
+        const reassigned: SnapshotRecord = {
+          ...record,
+          productId: options.targetProductId,
+          observationKey: observationKey({
+            ...toStoredSnapshot(record).snapshot,
+            productId: options.targetProductId,
+          }),
+        };
+
+        if (records.has(reassigned.observationKey)) {
+          records.delete(key);
+          deduped += 1;
+          continue;
+        }
+
+        records.delete(key);
+        records.set(reassigned.observationKey, reassigned);
+        moved += 1;
+      }
+
+      return { moved, deduped };
+    },
+
+    async countForProduct(productId: string): Promise<number> {
+      return [...records.values()].filter((record) => record.productId === productId).length;
     },
 
     async deleteRange(query: {

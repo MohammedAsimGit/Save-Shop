@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import type { Money } from '@smart-shopping/shared';
 
+import type { StoreSession } from '../storeSession.js';
+
 /**
  * Daily rollup storage abstraction.
  *
@@ -71,6 +73,53 @@ export interface RollupStore {
   countOlderThan(dateKey: string): Promise<number>;
   /** Deletes rollups older than `dateKey`, at most `limit` per call. */
   deleteOlderThan(dateKey: string, limit: number): Promise<number>;
+  /**
+   * Moves a product's daily aggregates to its merge target.
+   *
+   * Two products merged into one can share a (source, marketplace, currency,
+   * provenance, day) group. Those rows are combined rather than duplicated: counts
+   * add up, the minimum and maximum span both, and first/last come from the earlier
+   * and later window respectively. A merge must not rewrite price history into a
+   * shape the aggregation rules could never produce.
+   */
+  mergeProduct(options: {
+    readonly sourceProductId: string;
+    readonly targetProductId: string;
+    readonly tx?: StoreSession;
+  }): Promise<{ readonly moved: number; readonly combined: number }>;
+  countForProduct(productId: string): Promise<number>;
+}
+
+/** Combines two rollups of the same group and day; `earlier` wins ties. */
+export function combineRollups(earlier: RollupRecord, later: RollupRecord): RollupRecord {
+  const [first, second] =
+    earlier.windowStart.getTime() <= later.windowStart.getTime()
+      ? [earlier, later]
+      : [later, earlier];
+
+  return {
+    ...first,
+    windowStart: new Date(Math.min(first.windowStart.getTime(), second.windowStart.getTime())),
+    windowEnd: new Date(Math.max(first.windowEnd.getTime(), second.windowEnd.getTime())),
+    minPrice:
+      first.minPrice.amountMinor <= second.minPrice.amountMinor
+        ? { ...first.minPrice }
+        : { ...second.minPrice },
+    maxPrice:
+      first.maxPrice.amountMinor >= second.maxPrice.amountMinor
+        ? { ...first.maxPrice }
+        : { ...second.maxPrice },
+    firstPrice: { ...first.firstPrice },
+    lastPrice: { ...second.lastPrice },
+    observationCount: first.observationCount + second.observationCount,
+    availabilityCounts: {
+      inStock: first.availabilityCounts.inStock + second.availabilityCounts.inStock,
+      outOfStock: first.availabilityCounts.outOfStock + second.availabilityCounts.outOfStock,
+      preorder: first.availabilityCounts.preorder + second.availabilityCounts.preorder,
+      unknown: first.availabilityCounts.unknown + second.availabilityCounts.unknown,
+    },
+    generatedAt: new Date(Math.max(first.generatedAt.getTime(), second.generatedAt.getTime())),
+  };
 }
 
 /** Stable identity of a rollup: product, source, marketplace, currency, provenance, day. */

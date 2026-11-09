@@ -10,8 +10,13 @@ import {
   type CanonicalProduct,
   type CatalogueSearchQuery,
   type CatalogueStatus,
+  type MatchMethod,
+  type MatchStatus,
   type MarketplaceListing,
+  type ReviewQueueQuery,
 } from '@smart-shopping/shared';
+
+import type { StoreSession } from '../storeSession.js';
 
 /**
  * Catalogue persistence abstraction.
@@ -42,6 +47,65 @@ export interface ListingWriteResult {
   readonly created: number;
   readonly updated: number;
   readonly unchanged: number;
+  /** Listings whose existing human decision was preserved instead of re-matched. */
+  readonly respectedHumanDecisions?: number;
+}
+
+export type { StoreSession } from '../storeSession.js';
+
+/** One atomically applied administrative decision on a listing. */
+export interface ListingReviewPatch {
+  readonly decision: 'accepted' | 'rejected' | 'reassigned' | 'deferred' | 'reopened';
+  readonly decidedBy: string;
+  readonly decidedAt: Date;
+  readonly reason: string;
+  readonly notes: string | null;
+  readonly matcherVersion: string;
+  /** New canonical product for accepted/reassigned; null otherwise. */
+  readonly canonicalProductId: string | null;
+  /** Candidate a human refused (rejected only). */
+  readonly rejectedProductId?: string;
+  /** The verdict the human is overriding, captured for the audit trail. */
+  readonly previousStatus: MatchStatus;
+  readonly previousCanonicalProductId: string | null;
+  /** Effective match recorded on the listing after the decision. */
+  readonly match: {
+    readonly status: MatchStatus;
+    readonly method: MatchMethod;
+    readonly confidence: number;
+    readonly requiresReview: boolean;
+    readonly reasons: readonly string[];
+  };
+}
+
+export interface ListingReviewResult {
+  readonly status: 'applied' | 'conflict' | 'not_found';
+  readonly listing?: StoredListing;
+  /** Revision the caller should retry from when the write conflicted. */
+  readonly currentRevision?: number;
+}
+
+export interface ReviewQueueCounts {
+  readonly pending: number;
+  readonly decided: number;
+  readonly requiresReview: number;
+  readonly byVerdict: Readonly<Record<MatchStatus, number>>;
+}
+
+export interface ReviewQueueResult {
+  readonly listings: readonly StoredListing[];
+  readonly totalItems: number;
+  readonly counts: ReviewQueueCounts;
+}
+
+export interface MergeReferenceCounts {
+  readonly listings: number;
+  readonly variants: number;
+}
+
+export interface MergeInspection {
+  readonly listings: number;
+  readonly variants: number;
 }
 
 /** Everything the matcher may look a product up by. All keys are normalized. */
@@ -70,6 +134,32 @@ export interface CatalogueStore {
 
   upsertProducts(products: readonly CanonicalProduct[]): Promise<ProductWriteResult>;
   findProduct(id: string): Promise<CanonicalProduct | null>;
+  /** Batch lookup used by ingestion to honour existing human decisions. */
+  findListingsByIds(ids: readonly string[]): Promise<StoredListing[]>;
+  findListing(id: string): Promise<StoredListing | null>;
+  /**
+   * Rows a human must look at, filtered and paginated, plus the unfiltered counts
+   * the queue header shows. Candidate scoring happens in the service.
+   */
+  listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueResult>;
+  /**
+   * Compare-and-set on `revision`: two administrators acting on the same stale row
+   * means the second one is told to reload, never that one silently wins.
+   */
+  applyReview(
+    listingId: string,
+    expectedRevision: number,
+    patch: ListingReviewPatch,
+  ): Promise<ListingReviewResult>;
+  /** Counts used before a merge; no writes. */
+  inspectMerge(productId: string): Promise<MergeInspection>;
+  /** Moves listings and variant links to the target and archives the source. */
+  mergeProductReferences(options: {
+    readonly sourceProductId: string;
+    readonly targetProductId: string;
+    readonly mergedAt: Date;
+    readonly tx?: StoreSession;
+  }): Promise<MergeReferenceCounts>;
   /** Candidates for identity matching; never returns more than `limit`. */
   findCandidates(query: ProductCandidateQuery): Promise<CanonicalProduct[]>;
   /** Broad candidate set for search; ranking and pagination happen in the service. */
@@ -115,6 +205,20 @@ export function listingKey(parts: {
     .update([parts.sourceId, parts.marketplaceId, parts.externalId].join('|'))
     .digest('hex')
     .slice(0, 40);
+}
+
+/**
+ * True while a listing still waits for a human. Shared by the memory store and the
+ * review service so "is this row in the queue?" has exactly one definition; the
+ * MongoDB store expresses the same rule in a query.
+ */
+export function isPendingReview(listing: StoredListing): boolean {
+  const settled =
+    listing.review?.decision === 'accepted' ||
+    listing.review?.decision === 'reassigned' ||
+    listing.review?.decision === 'rejected';
+  if (settled) return false;
+  return listing.canonicalProductId === null || listing.match.requiresReview;
 }
 
 /**

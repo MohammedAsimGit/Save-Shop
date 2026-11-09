@@ -1,9 +1,14 @@
+import type { ClientSession } from 'mongoose';
+
 import {
   PriceDailyRollupModel,
   type PriceDailyRollupFields,
 } from '../../models/priceDailyRollup.js';
+import type { StoreSession } from '../storeSession.js';
 import {
+  combineRollups,
   compareRollups,
+  rollupKey,
   type RollupInsertResult,
   type RollupListQuery,
   type RollupRecord,
@@ -73,6 +78,88 @@ export function createMongoRollupStore(): RollupStore {
         .lean<PriceDailyRollupFields[]>();
 
       return documents.map(toRecord);
+    },
+
+    async mergeProduct(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly tx?: StoreSession;
+    }): Promise<{ moved: number; combined: number }> {
+      const session = options.tx as ClientSession | undefined;
+      const documents = await PriceDailyRollupModel.find({ productId: options.sourceProductId })
+        .sort({ dateKey: 1, rollupKey: 1 })
+        .lean<PriceDailyRollupFields[]>();
+
+      let moved = 0;
+      let combined = 0;
+
+      for (const document of documents) {
+        // `_id` is not part of the inferred lean type; the document is a stored
+        // rollup, so it always has one.
+        const documentId = (document as unknown as { _id: unknown })._id;
+        const record = toRecord(document);
+        const nextKey = rollupKey({
+          productId: options.targetProductId,
+          sourceId: record.sourceId,
+          marketplaceId: record.marketplaceId,
+          currency: record.currency,
+          sourceVerification: record.sourceVerification,
+          dateKey: record.dateKey,
+        });
+
+        const existing = await PriceDailyRollupModel.findOne({ rollupKey: nextKey })
+          .session(session ?? null)
+          .lean<PriceDailyRollupFields | null>();
+
+        if (existing) {
+          const merged = combineRollups(toRecord(existing), {
+            ...record,
+            productId: options.targetProductId,
+            rollupKey: nextKey,
+          });
+
+          await PriceDailyRollupModel.updateOne(
+            { rollupKey: nextKey },
+            {
+              $set: {
+                productId: merged.productId,
+                minPrice: merged.minPrice,
+                maxPrice: merged.maxPrice,
+                firstPrice: merged.firstPrice,
+                lastPrice: merged.lastPrice,
+                observationCount: merged.observationCount,
+                availabilityCounts: merged.availabilityCounts,
+                windowStart: merged.windowStart,
+                windowEnd: merged.windowEnd,
+                generatedAt: merged.generatedAt,
+              },
+            },
+            session ? { session } : {},
+          );
+
+          await PriceDailyRollupModel.deleteOne({ _id: documentId }, session ? { session } : {});
+          combined += 1;
+          continue;
+        }
+
+        await PriceDailyRollupModel.updateOne(
+          { _id: documentId },
+          {
+            $set: {
+              productId: options.targetProductId,
+              rollupKey: nextKey,
+            },
+          },
+          session ? { session } : {},
+        );
+        moved += 1;
+      }
+
+      return { moved, combined };
+    },
+
+    async countForProduct(productId: string): Promise<number> {
+      return PriceDailyRollupModel.countDocuments({ productId });
     },
 
     async countOlderThan(dateKey: string): Promise<number> {

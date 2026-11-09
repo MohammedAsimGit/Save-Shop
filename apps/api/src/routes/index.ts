@@ -1,5 +1,6 @@
 import { Router } from 'express';
 
+import { adminRouter } from './admin.routes.js';
 import { catalogueRouter } from './catalogue.routes.js';
 import { comparisonRouter, sourcesRouter } from './comparison.routes.js';
 import { healthRouter } from './health.routes.js';
@@ -19,6 +20,9 @@ export function createApiRouter(): Router {
   router.use('/products', catalogueRouter);
   router.use('/products', comparisonRouter);
   router.use('/sources', sourcesRouter);
+  // Administration is a separate surface: every route under /admin (except the
+  // login itself) is behind the admin auth middleware.
+  router.use('/admin', adminRouter);
 
   return router;
 }

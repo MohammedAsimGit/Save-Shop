@@ -48,9 +48,22 @@ export const catalogueRecordSchema = z.object({
 
 export type CatalogueRecord = z.infer<typeof catalogueRecordSchema>;
 
-/** A canonical product as a source may declare it (timestamps are ours). */
+/**
+ * A canonical product as a source may declare it.
+ *
+ * Timestamps, sample/verified provenance and merge state are ours: a source can
+ * describe a product, but it cannot claim an ingestion time, a verification status
+ * or that the record has already been merged into another one.
+ */
 export const canonicalProductInputSchema = canonicalProductSchema
-  .omit({ createdAt: true, updatedAt: true, isSample: true, provenance: true })
+  .omit({
+    createdAt: true,
+    updatedAt: true,
+    isSample: true,
+    provenance: true,
+    mergedInto: true,
+    mergedAt: true,
+  })
   .extend({
     status: catalogueStatusSchema.default('active'),
     provenance: catalogueProvenanceSchema.default('manual'),

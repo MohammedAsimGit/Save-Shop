@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "retention": "tsx src/scripts/retention.ts",
     "catalogue": "tsx src/scripts/catalogue.ts",
+    "admin": "tsx src/scripts/admin.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -21,6 +22,7 @@
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
     "helmet": "^8.3.0",
+    "jose": "^6.2.15",
     "mongoose": "^9.11.4",
     "pino": "^10.4.0",
     "pino-http": "^11.0.0",

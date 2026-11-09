@@ -1,6 +1,7 @@
 import { createBrowserRouter, type RouteObject } from 'react-router-dom';
 
 import { RootLayout } from '../layouts/RootLayout';
+import { AdminPage } from '../pages/AdminPage';
 import { HomePage } from '../pages/HomePage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { PremiumPage } from '../pages/PremiumPage';
@@ -30,6 +31,9 @@ export const routes: RouteObject[] = [
       { path: 'premium', element: <PremiumPage /> },
       { path: 'profile', element: <ProfilePage /> },
       { path: 'signin', element: <SignInPage /> },
+      // Unlisted on purpose: administration is not part of the shopper journey and
+      // every request behind it is authorised by the API, not by this route.
+      { path: 'admin', element: <AdminPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

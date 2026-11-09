@@ -44,6 +44,8 @@ export interface ApiRequestOptions {
   readonly body?: unknown;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  /** Extra headers, e.g. `Authorization` for the administrator API. */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
@@ -59,6 +61,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       headers: {
         Accept: 'application/json',
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...options.headers,
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       signal,

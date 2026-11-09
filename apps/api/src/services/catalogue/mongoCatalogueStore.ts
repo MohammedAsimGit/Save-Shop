@@ -1,4 +1,10 @@
-import type { CanonicalProduct, MarketplaceListing } from '@smart-shopping/shared';
+import type { ClientSession } from 'mongoose';
+
+import type {
+  CanonicalProduct,
+  MarketplaceListing,
+  ReviewQueueQuery,
+} from '@smart-shopping/shared';
 
 import {
   CanonicalProductModel,
@@ -11,12 +17,46 @@ import {
 import {
   buildSearchFields,
   type CatalogueStore,
+  type ListingReviewPatch,
+  type ListingReviewResult,
   type ListingWriteResult,
+  type MergeInspection,
+  type MergeReferenceCounts,
   type ProductCandidateQuery,
   type ProductSearchCandidates,
   type ProductWriteResult,
+  type ReviewQueueResult,
+  type StoreSession,
   type StoredListing,
 } from './catalogueStore.js';
+
+/** Narrows the opaque store transaction to a Mongoose session. */
+function sessionOf(tx: StoreSession | undefined): ClientSession | undefined {
+  return tx as ClientSession | undefined;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * One row is pending until a human settles it. Expressed once here and mirrored in
+ * the memory store, so the queue cannot disagree between storage engines.
+ */
+const SETTLED_DECISIONS = ['accepted', 'reassigned', 'rejected'] as const;
+
+function pendingFilter(): Record<string, unknown> {
+  return {
+    $and: [
+      { $or: [{ canonicalProductId: null }, { 'match.requiresReview': true }] },
+      { 'review.decision': { $nin: [...SETTLED_DECISIONS] } },
+    ],
+  };
+}
+
+function decidedFilter(): Record<string, unknown> {
+  return { 'review.decision': { $in: [...SETTLED_DECISIONS, 'deferred'] } };
+}
 
 /**
  * MongoDB catalogue store.
@@ -45,6 +85,8 @@ function toDomainProduct(document: CanonicalProductFields): CanonicalProduct {
     status: document.status as CanonicalProduct['status'],
     provenance: document.provenance as CanonicalProduct['provenance'],
     isSample: document.isSample,
+    mergedInto: document.mergedInto ?? null,
+    mergedAt: document.mergedAt ? new Date(document.mergedAt).toISOString() : null,
     createdAt: new Date(document.createdAt).toISOString(),
     updatedAt: new Date(document.updatedAt).toISOString(),
   };
@@ -76,6 +118,24 @@ function toDomainListing(document: MarketplaceListingFields): StoredListing {
       requiresReview: document.match.requiresReview,
       reasons: [...(document.match.reasons ?? [])],
     },
+    revision: document.revision ?? 0,
+    review: document.review
+      ? {
+          decision: document.review.decision as NonNullable<
+            MarketplaceListing['review']
+          >['decision'],
+          decidedBy: document.review.decidedBy,
+          decidedAt: new Date(document.review.decidedAt).toISOString(),
+          reason: document.review.reason,
+          notes: document.review.notes ?? null,
+          previousStatus: document.review.previousStatus as NonNullable<
+            MarketplaceListing['review']
+          >['previousStatus'],
+          previousCanonicalProductId: document.review.previousCanonicalProductId ?? null,
+          rejectedProductIds: [...(document.review.rejectedProductIds ?? [])],
+          matcherVersion: document.review.matcherVersion,
+        }
+      : null,
     lastObservedAt: new Date(document.lastObservedAt).toISOString(),
     contentHash: document.contentHash,
     createdAt: new Date(document.createdAt).toISOString(),
@@ -122,6 +182,190 @@ export function createMongoCatalogueStore(): CatalogueStore {
     async findProduct(id: string): Promise<CanonicalProduct | null> {
       const document = await CanonicalProductModel.findOne({ id }).lean<CanonicalProductFields>();
       return document ? toDomainProduct(document) : null;
+    },
+
+    async findListingsByIds(ids: readonly string[]): Promise<StoredListing[]> {
+      if (ids.length === 0) return [];
+      const documents = await MarketplaceListingModel.find({ id: { $in: [...ids] } }).lean<
+        MarketplaceListingFields[]
+      >();
+      return documents.map(toDomainListing);
+    },
+
+    async findListing(id: string): Promise<StoredListing | null> {
+      const document = await MarketplaceListingModel.findOne({
+        id,
+      }).lean<MarketplaceListingFields>();
+      return document ? toDomainListing(document) : null;
+    },
+
+    async listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueResult> {
+      const filters: Record<string, unknown>[] = [];
+
+      if (query.scope === 'pending') filters.push(pendingFilter());
+      if (query.scope === 'decided') filters.push(decidedFilter());
+      if (query.verdict) filters.push({ 'match.status': query.verdict });
+      if (query.sourceId) filters.push({ sourceId: query.sourceId });
+      if (query.marketplaceId) filters.push({ marketplaceId: query.marketplaceId });
+      if (query.canonicalProductId) filters.push({ canonicalProductId: query.canonicalProductId });
+      if (query.q) {
+        const pattern = new RegExp(escapeRegex(query.q), 'i');
+        filters.push({
+          $or: [
+            { title: pattern },
+            { brand: pattern },
+            { model: pattern },
+            { externalId: pattern },
+            { id: pattern },
+          ],
+        });
+      }
+
+      const filter = filters.length > 0 ? { $and: filters } : {};
+      const sort: Record<string, 1 | -1> =
+        query.sort === 'newest'
+          ? { updatedAt: -1, id: 1 }
+          : query.sort === 'confidence_asc'
+            ? { 'match.confidence': 1, id: 1 }
+            : query.sort === 'confidence_desc'
+              ? { 'match.confidence': -1, id: 1 }
+              : { updatedAt: 1, id: 1 };
+
+      const [documents, totalItems, pending, decided, requiresReview, verdictCounts] =
+        await Promise.all([
+          MarketplaceListingModel.find(filter)
+            .sort(sort)
+            .skip((query.page - 1) * query.pageSize)
+            .limit(query.pageSize)
+            .lean<MarketplaceListingFields[]>(),
+          MarketplaceListingModel.countDocuments(filter),
+          MarketplaceListingModel.countDocuments(pendingFilter()),
+          MarketplaceListingModel.countDocuments(decidedFilter()),
+          MarketplaceListingModel.countDocuments({
+            $and: [pendingFilter(), { 'match.requiresReview': true }],
+          }),
+          MarketplaceListingModel.aggregate<{ _id: string; count: number }>([
+            { $match: pendingFilter() },
+            { $group: { _id: '$match.status', count: { $sum: 1 } } },
+          ]),
+        ]);
+
+      const byVerdict: Record<StoredListing['match']['status'], number> = {
+        exact: 0,
+        strong: 0,
+        possible: 0,
+        unmatched: 0,
+        conflict: 0,
+      };
+      for (const row of verdictCounts) {
+        if (row._id in byVerdict) byVerdict[row._id as keyof typeof byVerdict] = row.count;
+      }
+
+      return {
+        listings: documents.map(toDomainListing),
+        totalItems,
+        counts: { pending, decided, requiresReview, byVerdict },
+      };
+    },
+
+    async applyReview(
+      listingId: string,
+      expectedRevision: number,
+      patch: ListingReviewPatch,
+    ): Promise<ListingReviewResult> {
+      const prior = await MarketplaceListingModel.findOne({
+        id: listingId,
+      }).lean<MarketplaceListingFields>();
+      if (!prior) return { status: 'not_found' };
+
+      const rejected = new Set<string>(prior.review?.rejectedProductIds ?? []);
+      if (patch.rejectedProductId) rejected.add(patch.rejectedProductId);
+      // A human resolving the listing to a refused candidate reverses that refusal.
+      if (patch.canonicalProductId) rejected.delete(patch.canonicalProductId);
+
+      const review =
+        patch.decision === 'reopened'
+          ? null
+          : {
+              decision: patch.decision,
+              decidedBy: patch.decidedBy,
+              decidedAt: patch.decidedAt.toISOString(),
+              reason: patch.reason,
+              notes: patch.notes,
+              previousStatus: patch.previousStatus,
+              previousCanonicalProductId: patch.previousCanonicalProductId,
+              rejectedProductIds: [...rejected],
+              matcherVersion: patch.matcherVersion,
+            };
+
+      const updated = await MarketplaceListingModel.findOneAndUpdate(
+        { id: listingId, revision: expectedRevision },
+        {
+          $set: {
+            canonicalProductId: patch.canonicalProductId,
+            match: patch.match,
+            review,
+            revision: expectedRevision + 1,
+            updatedAt: patch.decidedAt,
+          },
+        },
+        { new: true },
+      ).lean<MarketplaceListingFields | null>();
+
+      if (!updated) {
+        const current = await MarketplaceListingModel.findOne({ id: listingId })
+          .select({ revision: 1 })
+          .lean<{ revision: number }>();
+        return current
+          ? { status: 'conflict', currentRevision: current.revision }
+          : { status: 'not_found' };
+      }
+
+      return { status: 'applied', listing: toDomainListing(updated) };
+    },
+
+    async inspectMerge(productId: string): Promise<MergeInspection> {
+      const [listings, variants] = await Promise.all([
+        MarketplaceListingModel.countDocuments({ canonicalProductId: productId }),
+        CanonicalProductModel.countDocuments({ variantOf: productId }),
+      ]);
+      return { listings, variants };
+    },
+
+    async mergeProductReferences(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly mergedAt: Date;
+      readonly tx?: StoreSession;
+    }): Promise<MergeReferenceCounts> {
+      const session = sessionOf(options.tx);
+
+      const listings = await MarketplaceListingModel.updateMany(
+        { canonicalProductId: options.sourceProductId },
+        { $set: { canonicalProductId: options.targetProductId } },
+        session ? { session } : {},
+      );
+
+      const variants = await CanonicalProductModel.updateMany(
+        { variantOf: options.sourceProductId },
+        { $set: { variantOf: options.targetProductId } },
+        session ? { session } : {},
+      );
+
+      await CanonicalProductModel.updateOne(
+        { id: options.sourceProductId },
+        {
+          $set: {
+            status: 'archived',
+            mergedInto: options.targetProductId,
+            mergedAt: options.mergedAt,
+            updatedAt: options.mergedAt,
+          },
+        },
+        session ? { session } : {},
+      );
+
+      return { listings: listings.modifiedCount, variants: variants.modifiedCount };
     },
 
     async findCandidates(query: ProductCandidateQuery): Promise<CanonicalProduct[]> {
@@ -174,29 +418,45 @@ export function createMongoCatalogueStore(): CatalogueStore {
       const existing = await MarketplaceListingModel.find({
         id: { $in: records.map((record) => record.id) },
       })
-        .select({ id: 1, contentHash: 1 })
-        .lean<{ id: string; contentHash: string }[]>();
-      const priorHash = new Map(existing.map((document) => [document.id, document.contentHash]));
+        .select({ id: 1, contentHash: 1, review: 1 })
+        .lean<
+          {
+            id: string;
+            contentHash: string;
+            review: { decision: string } | null;
+          }[]
+        >();
+      const priorById = new Map(existing.map((document) => [document.id, document]));
 
       let created = 0;
       let updated = 0;
       let unchanged = 0;
+      let respectedHumanDecisions = 0;
 
       const operations = records.map((listing) => {
-        const prior = priorHash.get(listing.id);
+        const prior = priorById.get(listing.id);
         const isNew = prior === undefined;
-        const isUnchanged = prior === listing.contentHash;
+        const isUnchanged = prior?.contentHash === listing.contentHash;
+        // A human decision outranks the matcher: ingestion refreshes the facts a
+        // source can change, but never the resolution a person chose.
+        const protectedDecision =
+          prior?.review !== undefined &&
+          prior?.review !== null &&
+          prior.review.decision !== 'reopened';
 
         if (isNew) created += 1;
         else if (isUnchanged) unchanged += 1;
         else updated += 1;
+        if (protectedDecision) respectedHumanDecisions += 1;
 
         // `lastObservedAt` advances even for unchanged content: seeing the same
         // listing again is still an observation, just not a new fact.
         const mutable = isUnchanged
           ? { lastObservedAt: new Date(listing.lastObservedAt) }
           : {
-              canonicalProductId: listing.canonicalProductId,
+              ...(protectedDecision
+                ? {}
+                : { canonicalProductId: listing.canonicalProductId, match: listing.match }),
               title: listing.title,
               url: listing.url,
               brand: listing.brand ?? null,
@@ -207,7 +467,6 @@ export function createMongoCatalogueStore(): CatalogueStore {
               imageUrl: listing.imageUrl ?? null,
               color: listing.color ?? null,
               storageCapacity: listing.storageCapacity ?? null,
-              match: listing.match,
               contentHash: listing.contentHash,
               lastObservedAt: new Date(listing.lastObservedAt),
               updatedAt: new Date(listing.updatedAt),
@@ -225,6 +484,7 @@ export function createMongoCatalogueStore(): CatalogueStore {
                 externalId: listing.externalId,
                 provenance: listing.provenance,
                 isSample: listing.isSample,
+                revision: 0,
                 createdAt: new Date(listing.createdAt),
               },
             },
@@ -235,7 +495,14 @@ export function createMongoCatalogueStore(): CatalogueStore {
 
       await MarketplaceListingModel.bulkWrite(operations, { ordered: false });
 
-      return { created, updated, unchanged };
+      return {
+        created,
+        updated,
+        unchanged,
+        // Present only when it happened, so a report shape without human decisions
+        // stays the same as it was before Sprint 6.
+        ...(respectedHumanDecisions > 0 ? { respectedHumanDecisions } : {}),
+      };
     },
 
     async listListings(productId: string, limit: number): Promise<StoredListing[]> {

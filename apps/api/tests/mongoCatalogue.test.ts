@@ -68,6 +68,8 @@ function listing(overrides: Record<string, unknown> = {}) {
       requiresReview: false,
       reasons: ['GTIN matched exactly'],
     },
+    revision: 0,
+    review: null,
     lastObservedAt: NOW.toISOString(),
     createdAt: NOW.toISOString(),
     updatedAt: NOW.toISOString(),

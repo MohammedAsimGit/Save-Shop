@@ -21,6 +21,7 @@
     "dev:mobile": "npm run start --workspace @smart-shopping/mobile",
     "retention": "npm run retention --workspace @smart-shopping/api",
     "catalogue": "npm run catalogue --workspace @smart-shopping/api",
+    "admin": "npm run admin --workspace @smart-shopping/api",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

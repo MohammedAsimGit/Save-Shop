@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -70,6 +71,22 @@ const rawEnvSchema = z.object({
   RETENTION_ROLLUP_DAYS: z.coerce.number().int().min(1).max(7300).default(730),
   RETENTION_BATCH_SIZE: z.coerce.number().int().min(1).max(10_000).default(500),
   RETENTION_DRY_RUN: z.enum(['true', 'false']).default('true'),
+
+  /**
+   * Catalogue administration (Sprint 6).
+   *
+   * Sessions are HS256 JWTs signed with this secret. It is required in production
+   * (see the refinement below); development and test get a random per-process
+   * secret, which means a restart logs administrators out instead of shipping a
+   * predictable default. The secret is never logged and never sent to a client.
+   *
+   * The login window/threshold are a **per-instance** throttle, not a distributed
+   * rate limiter: the limitation is documented rather than implied.
+   */
+  ADMIN_JWT_SECRET: z.string().min(32).optional(),
+  ADMIN_SESSION_TTL_SECONDS: z.coerce.number().int().min(300).max(43_200).default(3600),
+  ADMIN_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(5),
+  ADMIN_LOGIN_WINDOW_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
 });
 
 const envSchema = rawEnvSchema.superRefine((value, ctx) => {
@@ -78,6 +95,17 @@ const envSchema = rawEnvSchema.superRefine((value, ctx) => {
       code: 'custom',
       path: ['MONGODB_URI'],
       message: 'MONGODB_URI is required when NODE_ENV=production',
+    });
+  }
+
+  // A production deployment must sign admin sessions with a secret it owns; an
+  // ephemeral one would log every administrator out on each restart, and a
+  // hardcoded fallback would be a shared credential.
+  if (value.NODE_ENV === 'production' && !value.ADMIN_JWT_SECRET) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['ADMIN_JWT_SECRET'],
+      message: 'ADMIN_JWT_SECRET is required when NODE_ENV=production',
     });
   }
 
@@ -138,6 +166,13 @@ export type Environment = z.infer<typeof rawEnvSchema> & {
   readonly persistDemoSnapshots: boolean;
   /** Validated compaction policy (Sprint 4); see the schema comments above. */
   readonly retention: RetentionPolicy;
+  /** Signing key for admin sessions; ephemeral outside production. */
+  readonly adminJwtSecret: string;
+  /** False when the deployment relies on the ephemeral development secret. */
+  readonly adminJwtSecretConfigured: boolean;
+  readonly adminSessionTtlSeconds: number;
+  readonly adminLoginMaxAttempts: number;
+  readonly adminLoginWindowSeconds: number;
 };
 
 /**
@@ -175,6 +210,9 @@ export function parseEnvironment(source: NodeJS.ProcessEnv): Environment {
   const corsAllowedOrigins = value.CORS_ALLOWED_ORIGINS.split(',')
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
+  // `randomBytes` rather than a literal: a missing secret must fail closed, never
+  // fall back to a value an attacker could know.
+  const adminJwtSecret = value.ADMIN_JWT_SECRET ?? randomBytes(32).toString('hex');
 
   return Object.freeze({
     ...value,
@@ -190,6 +228,11 @@ export function parseEnvironment(source: NodeJS.ProcessEnv): Environment {
       batchSize: value.RETENTION_BATCH_SIZE,
       dryRun: value.RETENTION_DRY_RUN === 'true',
     }),
+    adminJwtSecret,
+    adminJwtSecretConfigured: Boolean(value.ADMIN_JWT_SECRET),
+    adminSessionTtlSeconds: value.ADMIN_SESSION_TTL_SECONDS,
+    adminLoginMaxAttempts: value.ADMIN_LOGIN_MAX_ATTEMPTS,
+    adminLoginWindowSeconds: value.ADMIN_LOGIN_WINDOW_SECONDS,
   });
 }
 

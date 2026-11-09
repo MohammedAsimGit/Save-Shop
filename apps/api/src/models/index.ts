@@ -1,5 +1,9 @@
+import { AdminUserModel } from './adminUser.js';
 import { CanonicalProductModel } from './canonicalProduct.js';
+import { CatalogueAuditEventModel } from './catalogueAuditEvent.js';
 import { CatalogueIngestionRunModel } from './catalogueIngestionRun.js';
+import { CatalogueMergeRunModel } from './catalogueMergeRun.js';
+import { CatalogueReviewDecisionModel } from './catalogueReviewDecision.js';
 import { ComparisonCacheModel } from './comparisonCache.js';
 import { MarketplaceListingModel } from './marketplaceListing.js';
 import { PriceDailyRollupModel } from './priceDailyRollup.js';
@@ -26,5 +30,9 @@ export async function ensureModelIndexes(): Promise<void> {
     CanonicalProductModel.createIndexes(),
     MarketplaceListingModel.createIndexes(),
     CatalogueIngestionRunModel.createIndexes(),
+    AdminUserModel.createIndexes(),
+    CatalogueReviewDecisionModel.createIndexes(),
+    CatalogueAuditEventModel.createIndexes(),
+    CatalogueMergeRunModel.createIndexes(),
   ]);
 }

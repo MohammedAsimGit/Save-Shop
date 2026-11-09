@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { parseEnvironment } from '../src/config/env.js';
 
+/** Long enough to satisfy the 32-character minimum; a fixture, not a credential. */
+const ADMIN_SECRET = 'test-admin-session-secret-0123456789abcdef';
+
 describe('environment validation', () => {
   it('applies safe development defaults', () => {
     const env = parseEnvironment({});
@@ -22,10 +25,13 @@ describe('environment validation', () => {
       NODE_ENV: 'production',
       MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
       CORS_ALLOWED_ORIGINS: 'https://example.com',
+      ADMIN_JWT_SECRET: ADMIN_SECRET,
     });
 
     expect(env.isDatabaseConfigured).toBe(true);
     expect(env.corsAllowedOrigins).toEqual(['https://example.com']);
+    expect(env.adminJwtSecret).toBe(ADMIN_SECRET);
+    expect(env.adminJwtSecretConfigured).toBe(true);
   });
 
   it('rejects wildcard CORS origins in production', () => {
@@ -34,6 +40,7 @@ describe('environment validation', () => {
         NODE_ENV: 'production',
         MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
         CORS_ALLOWED_ORIGINS: '*',
+        ADMIN_JWT_SECRET: ADMIN_SECRET,
       }),
     ).toThrow(/[Ww]ildcard/);
   });
@@ -66,6 +73,7 @@ describe('environment validation', () => {
         NODE_ENV: 'production',
         MONGODB_URI: '   ',
         CORS_ALLOWED_ORIGINS: 'https://example.com',
+        ADMIN_JWT_SECRET: ADMIN_SECRET,
       }),
     ).toThrow(/MONGODB_URI/);
   });
@@ -83,6 +91,7 @@ describe('environment validation', () => {
         NODE_ENV: 'production',
         MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
         CORS_ALLOWED_ORIGINS: 'https://example.com',
+        ADMIN_JWT_SECRET: ADMIN_SECRET,
       }).persistDemoSnapshots,
     ).toBe(false);
   });
@@ -94,6 +103,7 @@ describe('environment validation', () => {
         NODE_ENV: 'production',
         MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
         CORS_ALLOWED_ORIGINS: 'https://example.com',
+        ADMIN_JWT_SECRET: ADMIN_SECRET,
         PERSIST_DEMO_SNAPSHOTS: 'true',
       }).persistDemoSnapshots,
     ).toBe(true);
@@ -136,6 +146,39 @@ describe('environment validation', () => {
     expect(() => parseEnvironment({ RETENTION_RAW_DAYS: '0' })).toThrow(/RETENTION_RAW_DAYS/);
     expect(() => parseEnvironment({ RETENTION_BATCH_SIZE: '0' })).toThrow(/RETENTION_BATCH_SIZE/);
     expect(() => parseEnvironment({ RETENTION_DRY_RUN: 'yes' })).toThrow(/RETENTION_DRY_RUN/);
+  });
+
+  it('requires an administrator signing secret in production', () => {
+    expect(() =>
+      parseEnvironment({
+        NODE_ENV: 'production',
+        MONGODB_URI: 'mongodb://127.0.0.1:27017/example',
+        CORS_ALLOWED_ORIGINS: 'https://example.com',
+      }),
+    ).toThrow(/ADMIN_JWT_SECRET/);
+  });
+
+  it('rejects an administrator secret shorter than 32 characters', () => {
+    expect(() => parseEnvironment({ ADMIN_JWT_SECRET: 'too-short' })).toThrow(/ADMIN_JWT_SECRET/);
+  });
+
+  it('generates an ephemeral administrator secret outside production', () => {
+    const env = parseEnvironment({});
+
+    expect(env.adminJwtSecretConfigured).toBe(false);
+    expect(env.adminJwtSecret.length).toBe(64);
+    expect(parseEnvironment({}).adminJwtSecret).not.toBe(env.adminJwtSecret);
+  });
+
+  it('defaults the admin session policy and validates its bounds', () => {
+    const env = parseEnvironment({ ADMIN_JWT_SECRET: ADMIN_SECRET });
+
+    expect(env.adminSessionTtlSeconds).toBe(3600);
+    expect(env.adminLoginMaxAttempts).toBe(5);
+    expect(env.adminLoginWindowSeconds).toBe(900);
+    expect(() => parseEnvironment({ ADMIN_SESSION_TTL_SECONDS: '60' })).toThrow(
+      /ADMIN_SESSION_TTL_SECONDS/,
+    );
   });
 
   it('defaults the comparison cache to five minutes and validates its range', () => {

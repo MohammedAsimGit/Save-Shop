@@ -1,12 +1,18 @@
-import { normalizeKey, type CanonicalProduct } from '@smart-shopping/shared';
+import { normalizeKey, type CanonicalProduct, type ReviewQueueQuery } from '@smart-shopping/shared';
 
 import {
   buildSearchFields,
+  isPendingReview,
   type CatalogueStore,
+  type ListingReviewPatch,
+  type ListingReviewResult,
   type ListingWriteResult,
+  type MergeInspection,
+  type MergeReferenceCounts,
   type ProductCandidateQuery,
   type ProductSearchCandidates,
   type ProductWriteResult,
+  type ReviewQueueResult,
   type StoredListing,
 } from './catalogueStore.js';
 
@@ -25,6 +31,15 @@ function productSearchKeys(product: CanonicalProduct): {
 } {
   const fields = buildSearchFields(product);
   return { brandKey: fields.brandKey, modelKey: fields.modelKey, tokens: fields.tokens };
+}
+
+function matchesQueueSearch(listing: StoredListing, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return true;
+  return [listing.title, listing.brand ?? '', listing.model ?? '', listing.externalId, listing.id]
+    .join(' ')
+    .toLowerCase()
+    .includes(needle);
 }
 
 export function createMemoryCatalogueStore(): CatalogueStore {
@@ -46,6 +61,168 @@ export function createMemoryCatalogueStore(): CatalogueStore {
 
     async findProduct(id: string): Promise<CanonicalProduct | null> {
       return products.get(id) ?? null;
+    },
+
+    async findListingsByIds(ids: readonly string[]): Promise<StoredListing[]> {
+      return ids
+        .map((id) => listings.get(id))
+        .filter((listing): listing is StoredListing => listing !== undefined);
+    },
+
+    async findListing(id: string): Promise<StoredListing | null> {
+      return listings.get(id) ?? null;
+    },
+
+    async listReviewQueue(query: ReviewQueueQuery): Promise<ReviewQueueResult> {
+      const byVerdict: Record<StoredListing['match']['status'], number> = {
+        exact: 0,
+        strong: 0,
+        possible: 0,
+        unmatched: 0,
+        conflict: 0,
+      };
+
+      let pending = 0;
+      let decided = 0;
+      let requiresReview = 0;
+
+      const candidates: StoredListing[] = [];
+
+      for (const listing of listings.values()) {
+        const isPending = isPendingReview(listing);
+        const isDecided = listing.review !== null && listing.review.decision !== 'reopened';
+        if (isPending) {
+          pending += 1;
+          byVerdict[listing.match.status] += 1;
+          if (listing.match.requiresReview) requiresReview += 1;
+        }
+        if (isDecided) decided += 1;
+
+        if (query.scope === 'pending' && !isPending) continue;
+        if (query.scope === 'decided' && !isDecided) continue;
+        if (query.verdict && listing.match.status !== query.verdict) continue;
+        if (query.sourceId && listing.sourceId !== query.sourceId) continue;
+        if (query.marketplaceId && listing.marketplaceId !== query.marketplaceId) continue;
+        if (query.canonicalProductId && listing.canonicalProductId !== query.canonicalProductId) {
+          continue;
+        }
+        if (query.q && !matchesQueueSearch(listing, query.q)) continue;
+
+        candidates.push(listing);
+      }
+
+      candidates.sort((a, b) => {
+        switch (query.sort) {
+          case 'newest':
+            return b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id);
+          case 'confidence_asc':
+            return a.match.confidence - b.match.confidence || a.id.localeCompare(b.id);
+          case 'confidence_desc':
+            return b.match.confidence - a.match.confidence || a.id.localeCompare(b.id);
+          default:
+            return a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id);
+        }
+      });
+
+      const start = (query.page - 1) * query.pageSize;
+
+      return {
+        listings: candidates.slice(start, start + query.pageSize),
+        totalItems: candidates.length,
+        counts: { pending, decided, requiresReview, byVerdict },
+      };
+    },
+
+    async applyReview(
+      listingId: string,
+      expectedRevision: number,
+      patch: ListingReviewPatch,
+    ): Promise<ListingReviewResult> {
+      const prior = listings.get(listingId);
+      if (!prior) return { status: 'not_found' };
+      if (prior.revision !== expectedRevision) {
+        return { status: 'conflict', currentRevision: prior.revision };
+      }
+
+      const rejected = new Set(prior.review?.rejectedProductIds ?? []);
+      if (patch.rejectedProductId) rejected.add(patch.rejectedProductId);
+      // Resolving a listing to a previously rejected candidate is an explicit
+      // administrative reversal, so that candidate is no longer refused.
+      if (patch.canonicalProductId) rejected.delete(patch.canonicalProductId);
+
+      const updated: StoredListing = {
+        ...prior,
+        canonicalProductId: patch.canonicalProductId,
+        match: {
+          status: patch.match.status,
+          method: patch.match.method,
+          confidence: patch.match.confidence,
+          requiresReview: patch.match.requiresReview,
+          reasons: [...patch.match.reasons],
+        },
+        revision: prior.revision + 1,
+        review:
+          patch.decision === 'reopened'
+            ? null
+            : {
+                decision: patch.decision,
+                decidedBy: patch.decidedBy,
+                decidedAt: patch.decidedAt.toISOString(),
+                reason: patch.reason,
+                notes: patch.notes,
+                previousStatus: patch.previousStatus,
+                previousCanonicalProductId: patch.previousCanonicalProductId,
+                rejectedProductIds: [...rejected],
+                matcherVersion: patch.matcherVersion,
+              },
+        updatedAt: patch.decidedAt.toISOString(),
+      };
+
+      listings.set(listingId, updated);
+      return { status: 'applied', listing: updated };
+    },
+
+    async inspectMerge(productId: string): Promise<MergeInspection> {
+      return {
+        listings: [...listings.values()].filter(
+          (listing) => listing.canonicalProductId === productId,
+        ).length,
+        variants: [...products.values()].filter((product) => product.variantOf === productId)
+          .length,
+      };
+    },
+
+    async mergeProductReferences(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly mergedAt: Date;
+    }): Promise<MergeReferenceCounts> {
+      let movedListings = 0;
+      for (const [id, listing] of listings) {
+        if (listing.canonicalProductId !== options.sourceProductId) continue;
+        listings.set(id, { ...listing, canonicalProductId: options.targetProductId });
+        movedListings += 1;
+      }
+
+      let movedVariants = 0;
+      for (const [id, product] of products) {
+        if (product.variantOf !== options.sourceProductId) continue;
+        products.set(id, { ...product, variantOf: options.targetProductId });
+        movedVariants += 1;
+      }
+
+      const source = products.get(options.sourceProductId);
+      if (source) {
+        products.set(source.id, {
+          ...source,
+          status: 'archived',
+          mergedInto: options.targetProductId,
+          mergedAt: options.mergedAt.toISOString(),
+          updatedAt: options.mergedAt.toISOString(),
+        });
+      }
+
+      return { listings: movedListings, variants: movedVariants };
     },
 
     async findCandidates(query: ProductCandidateQuery): Promise<CanonicalProduct[]> {
@@ -99,6 +276,7 @@ export function createMemoryCatalogueStore(): CatalogueStore {
       let created = 0;
       let updated = 0;
       let unchanged = 0;
+      let respectedHumanDecisions = 0;
 
       for (const record of records) {
         const prior = listings.get(record.id);
@@ -107,15 +285,34 @@ export function createMemoryCatalogueStore(): CatalogueStore {
           created += 1;
           continue;
         }
+
+        // Mirrors the MongoDB store: a human decision outranks the matcher, so a
+        // re-ingestion refreshes facts without re-resolving the listing.
+        const protectedDecision = prior.review !== null && prior.review.decision !== 'reopened';
+        if (protectedDecision) respectedHumanDecisions += 1;
+
         if (prior.contentHash === record.contentHash) {
           unchanged += 1;
           continue;
         }
-        listings.set(record.id, record);
+
+        listings.set(record.id, {
+          ...record,
+          ...(protectedDecision
+            ? { canonicalProductId: prior.canonicalProductId, match: prior.match }
+            : {}),
+          review: prior.review,
+          revision: prior.revision,
+        });
         updated += 1;
       }
 
-      return { created, updated, unchanged };
+      return {
+        created,
+        updated,
+        unchanged,
+        ...(respectedHumanDecisions > 0 ? { respectedHumanDecisions } : {}),
+      };
     },
 
     async listListings(productId: string, limit: number): Promise<StoredListing[]> {

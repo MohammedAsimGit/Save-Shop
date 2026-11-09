@@ -45,6 +45,13 @@ const canonicalProductSchema = new Schema(
       enum: ['demo', 'manual', 'authorized_source'],
     },
     isSample: { type: Boolean, required: true },
+    /**
+     * Set when an administrator merged this record into another product. The source
+     * is archived, never deleted: listings, snapshots and rollups move to the target,
+     * and this field keeps the old id resolvable as a redirect.
+     */
+    mergedInto: { type: String, default: null, maxLength: 120 },
+    mergedAt: { type: Date, default: null },
     /** Denormalized search keys; derived, never editable through the API. */
     search: {
       text: { type: String, required: true },
@@ -71,6 +78,8 @@ canonicalProductSchema.index({ 'search.tokens': 1 });
 canonicalProductSchema.index({ category: 1, status: 1 });
 canonicalProductSchema.index({ variantOf: 1 });
 canonicalProductSchema.index({ mpn: 1 });
+// Redirect lookups are on the hot path of every product read after a merge.
+canonicalProductSchema.index({ mergedInto: 1 });
 
 export type CanonicalProductFields = InferSchemaType<typeof canonicalProductSchema>;
 

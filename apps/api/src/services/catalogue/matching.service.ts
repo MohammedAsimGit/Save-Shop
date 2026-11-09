@@ -52,8 +52,93 @@ export interface MatchDecision extends ListingMatch {
   readonly canonicalProductId: string | null;
 }
 
+export interface MatchOptions {
+  /** Candidates a human already refused; never proposed again automatically. */
+  readonly excludeIds?: readonly string[];
+}
+
 export interface IdentityMatcher {
-  match(hints: ListingIdentityHints): Promise<MatchDecision>;
+  match(hints: ListingIdentityHints, options?: MatchOptions): Promise<MatchDecision>;
+}
+
+/**
+ * Assesses one listing against one product, using the same rules as the matcher.
+ *
+ * Administrative decisions call this before accepting or reassigning: a human may
+ * override the verdict, but never silently - the caller receives the status, the
+ * reasons and whether the rules consider the pair contradictory.
+ */
+export function assessListingAgainstProduct(
+  hints: ListingIdentityHints,
+  product: CanonicalProduct,
+): {
+  readonly status: MatchStatus;
+  readonly method: MatchMethod;
+  readonly confidence: number;
+  readonly reasons: readonly string[];
+  readonly requiresReview: boolean;
+  readonly contradictory: boolean;
+} {
+  const normalized = normalizeHints(hints);
+  if (normalized.accessory) {
+    return {
+      status: 'conflict',
+      method: 'none',
+      confidence: CONFIDENCE.conflict,
+      reasons: ['looks like an accessory, not the product'],
+      requiresReview: true,
+      contradictory: true,
+    };
+  }
+
+  const score = scoreCandidate(normalized, product);
+  return {
+    status: score.status,
+    method: score.method,
+    confidence: score.confidence,
+    reasons: [...score.reasons],
+    requiresReview: score.status === 'possible' || score.blocked,
+    contradictory: score.blocked || score.status === 'unmatched',
+  };
+}
+
+/**
+ * One candidate as the deterministic rules see it. `contradictory` is true when the
+ * rules found a direct disagreement (identifier, generation, accessory or variant)
+ * or no evidence at all; the review service uses it to decide when an
+ * administrator must explicitly acknowledge a conflict.
+ */
+export interface CandidateAssessment {
+  readonly product: CanonicalProduct;
+  readonly status: MatchStatus;
+  readonly method: MatchMethod;
+  readonly confidence: number;
+  readonly reasons: readonly string[];
+  readonly contradictory: boolean;
+}
+
+/**
+ * Scores a listing against a set of candidates with exactly the rules used by
+ * `createIdentityMatcher`. The review queue and the accept/reassign validation both
+ * call this, so what an administrator sees is what the matcher decided.
+ */
+export function assessCandidates(
+  hints: ListingIdentityHints,
+  products: readonly CanonicalProduct[],
+): CandidateAssessment[] {
+  const normalized = normalizeHints(hints);
+
+  return products.map((product) => {
+    const score = scoreCandidate(normalized, product);
+    return {
+      product,
+      status: score.status,
+      method: score.method,
+      confidence: score.confidence,
+      reasons: [...score.reasons],
+      contradictory: score.blocked || score.status === 'unmatched',
+    };
+  });
 }
 
 /** Scores by rule, documented in one place so the number is explainable. */
@@ -351,7 +436,10 @@ export function createIdentityMatcher(options: {
   const limit = options.candidateLimit ?? 25;
 
   return {
-    async match(hints: ListingIdentityHints): Promise<MatchDecision> {
+    async match(
+      hints: ListingIdentityHints,
+      matchOptions: MatchOptions = {},
+    ): Promise<MatchDecision> {
       const normalized = normalizeHints(hints);
 
       // An accessory is never the primary product, even with a perfect title.
@@ -371,6 +459,9 @@ export function createIdentityMatcher(options: {
         ...(normalized.mpn ? { mpn: normalized.mpn } : {}),
         ...(normalized.brandKey ? { brandKey: normalized.brandKey } : {}),
         ...(normalized.tokens.length > 0 ? { nameTokens: normalized.tokens.slice(0, 6) } : {}),
+        ...(matchOptions.excludeIds && matchOptions.excludeIds.length > 0
+          ? { excludeIds: matchOptions.excludeIds }
+          : {}),
         limit,
       });
 

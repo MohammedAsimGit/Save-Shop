@@ -42,6 +42,33 @@ const listingMatchSchema = new Schema(
   { _id: false },
 );
 
+/**
+ * The latest human decision about a listing. Embedded so ingestion can respect it
+ * without a join; the full history lives in `catalogue_review_decisions`.
+ */
+const listingReviewSchema = new Schema(
+  {
+    decision: {
+      type: String,
+      required: true,
+      enum: ['accepted', 'rejected', 'reassigned', 'deferred', 'reopened'],
+    },
+    decidedBy: { type: String, required: true, maxLength: 60 },
+    decidedAt: { type: Date, required: true },
+    reason: { type: String, required: true, maxLength: 240 },
+    notes: { type: String, default: null, maxLength: 1000 },
+    previousStatus: {
+      type: String,
+      required: true,
+      enum: ['exact', 'strong', 'possible', 'unmatched', 'conflict'],
+    },
+    previousCanonicalProductId: { type: String, default: null, maxLength: 120 },
+    rejectedProductIds: { type: [String], default: [] },
+    matcherVersion: { type: String, required: true, maxLength: 40 },
+  },
+  { _id: false },
+);
+
 const marketplaceListingSchema = new Schema(
   {
     /** sha256 of source|marketplace|externalId; deterministic and review friendly. */
@@ -63,6 +90,10 @@ const marketplaceListingSchema = new Schema(
     provenance: { type: String, required: true, enum: ['demo', 'manual', 'authorized_source'] },
     isSample: { type: Boolean, required: true },
     match: { type: listingMatchSchema, required: true },
+    /** Optimistic concurrency token; every administrative decision increments it. */
+    revision: { type: Number, required: true, default: 0, min: 0 },
+    /** Null until a human decides. When set, ingestion must not override it. */
+    review: { type: listingReviewSchema, default: null },
     lastObservedAt: { type: Date, required: true },
     /** Hash of the mutable content, so a no-op re-ingestion is reported as such. */
     contentHash: { type: String, required: true },
@@ -77,6 +108,9 @@ marketplaceListingSchema.index({ sourceId: 1, marketplaceId: 1, externalId: 1 },
 marketplaceListingSchema.index({ canonicalProductId: 1 });
 marketplaceListingSchema.index({ 'match.status': 1 });
 marketplaceListingSchema.index({ gtin: 1 });
+// Queue ordering is ingestion-newest-first, so updatedAt is the sort index.
+marketplaceListingSchema.index({ updatedAt: -1 });
+marketplaceListingSchema.index({ 'review.decision': 1 });
 
 export type MarketplaceListingFields = InferSchemaType<typeof marketplaceListingSchema>;
 

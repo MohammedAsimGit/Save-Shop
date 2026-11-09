@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import { offerSnapshotSchema, type MarketSource, type OfferSnapshot } from '@smart-shopping/shared';
 
+import type { StoreSession } from '../storeSession.js';
+
 /**
  * Snapshot storage abstraction.
  *
@@ -123,6 +125,19 @@ export interface SnapshotStore {
     readonly to: Date;
     readonly limit: number;
   }): Promise<number>;
+  /**
+   * Moves every observation of one product to another after a canonical merge.
+   *
+   * `observationKey` includes the product id, so each row is re-keyed; a row whose
+   * new key already exists is a duplicate observation and is dropped instead of
+   * becoming a second point on the chart. Never deletes history that has no twin.
+   */
+  mergeProduct(options: {
+    readonly sourceProductId: string;
+    readonly targetProductId: string;
+    readonly tx?: StoreSession;
+  }): Promise<{ readonly moved: number; readonly deduped: number }>;
+  countForProduct(productId: string): Promise<number>;
 }
 
 /**

@@ -120,17 +120,42 @@ export interface CatalogueServiceOptions {
 export function createCatalogueService(options: CatalogueServiceOptions): CatalogueService {
   const { store } = options;
 
-  async function requireProduct(productId: string): Promise<CanonicalProduct> {
+  /**
+   * Follows merge redirects to the surviving product.
+   *
+   * A merged product is archived, never deleted, so an old link, bookmark or price
+   * alert keeps working. The hop limit means a corrupted chain cannot loop forever.
+   */
+  async function followMerge(
+    product: CanonicalProduct,
+  ): Promise<{ product: CanonicalProduct; redirectedFrom: string | null }> {
+    let current = product;
+    let redirectedFrom: string | null = null;
+
+    for (let hop = 0; hop < 5 && current.mergedInto; hop += 1) {
+      const next = await store.findProduct(current.mergedInto);
+      if (!next) break;
+      redirectedFrom ??= current.id;
+      current = next;
+    }
+
+    return { product: current, redirectedFrom };
+  }
+
+  async function requireProduct(
+    productId: string,
+  ): Promise<{ product: CanonicalProduct; redirectedFrom: string | null }> {
     const product = await store.findProduct(productId);
     if (!product) throw AppError.notFound(`Unknown product: ${productId}`);
-    return product;
+    return followMerge(product);
   }
 
   return {
     store,
 
     async resolveProduct(productId: string): Promise<CanonicalProduct | null> {
-      return store.findProduct(productId);
+      const product = await store.findProduct(productId);
+      return product ? (await followMerge(product)).product : null;
     },
 
     async search(query: CatalogueSearchQuery): Promise<CatalogueSearchResponse> {
@@ -213,11 +238,16 @@ export function createCatalogueService(options: CatalogueServiceOptions): Catalo
     },
 
     async getProduct(productId: string): Promise<CatalogueProductResponse> {
-      const product = await requireProduct(productId);
-      const listings = await store.listListings(productId, MAX_LISTINGS_PER_PRODUCT);
+      const { product, redirectedFrom } = await requireProduct(productId);
+      const listings = await store.listListings(product.id, MAX_LISTINGS_PER_PRODUCT);
       const summary = summariseListings(listings);
 
       const notices: string[] = [];
+      if (redirectedFrom) {
+        notices.push(
+          `Product ${redirectedFrom} was merged into ${product.id}; showing the surviving catalogue record.`,
+        );
+      }
       if (product.isSample) {
         notices.push(
           'This is a sample catalogue record: the product identity is demo data, not a verified marketplace catalogue entry.',
@@ -247,8 +277,8 @@ export function createCatalogueService(options: CatalogueServiceOptions): Catalo
     },
 
     async getListings(productId: string): Promise<ProductListingsResponse> {
-      const product = await requireProduct(productId);
-      const stored = await store.listListings(productId, MAX_LISTINGS_PER_PRODUCT);
+      const { product, redirectedFrom } = await requireProduct(productId);
+      const stored = await store.listListings(product.id, MAX_LISTINGS_PER_PRODUCT);
 
       // Parsing strips storage-only fields (the change hash) and guarantees the
       // response matches the shared contract.
@@ -256,6 +286,11 @@ export function createCatalogueService(options: CatalogueServiceOptions): Catalo
       const summary = summariseListings(stored);
 
       const notices: string[] = [];
+      if (redirectedFrom) {
+        notices.push(
+          `Product ${redirectedFrom} was merged into ${product.id}; these are the surviving record's listings.`,
+        );
+      }
       if (stored.length === MAX_LISTINGS_PER_PRODUCT) {
         notices.push(`Only the first ${MAX_LISTINGS_PER_PRODUCT} listings are shown.`);
       }

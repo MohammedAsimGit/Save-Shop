@@ -1,5 +1,9 @@
+import type { ClientSession } from 'mongoose';
+
 import { PriceSnapshotModel, type PriceSnapshotFields } from '../../models/priceSnapshot.js';
+import type { StoreSession } from '../storeSession.js';
 import {
+  observationKey,
   prepareSnapshotRecords,
   toStoredSnapshot,
   type SnapshotDayCount,
@@ -141,6 +145,70 @@ export function createMongoSnapshotStore(): SnapshotStore {
       return PriceSnapshotModel.countDocuments({
         capturedAt: { $gte: query.from, $lt: query.to },
       });
+    },
+
+    async mergeProduct(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly tx?: StoreSession;
+    }): Promise<{ moved: number; deduped: number }> {
+      const session = options.tx as ClientSession | undefined;
+      const documents = await PriceSnapshotModel.find({ productId: options.sourceProductId })
+        .sort({ capturedAt: 1, observationKey: 1 })
+        .lean<PriceSnapshotFields[]>();
+
+      let moved = 0;
+      let deduped = 0;
+
+      for (const document of documents) {
+        const nextKey = observationKey({
+          productId: options.targetProductId,
+          marketplaceId: document.marketplaceId,
+          sourceId: document.sourceId,
+          productUrl: document.productUrl,
+          price: {
+            amountMinor: document.price.amountMinor,
+            currency: document.price.currency,
+          },
+          availability: document.availability,
+          capturedAt: new Date(document.capturedAt).toISOString(),
+          ttlSeconds: document.ttlSeconds,
+          attribution: {
+            label: document.attribution.label,
+            ...(document.attribution.url ? { url: document.attribution.url } : {}),
+          },
+        });
+
+        const exists = await PriceSnapshotModel.findOne({ observationKey: nextKey })
+          .select({ _id: 1 })
+          .session(session ?? null)
+          .lean<{ _id: unknown }>();
+
+        // `_id` is not part of the inferred lean type but every stored observation has
+        // one; the migration targets that exact document.
+        const documentId = (document as unknown as { _id: unknown })._id;
+
+        if (exists) {
+          // The same observation already belongs to the target product: dropping
+          // the duplicate keeps one point per observation in history.
+          await PriceSnapshotModel.deleteOne({ _id: documentId }, session ? { session } : {});
+          deduped += 1;
+          continue;
+        }
+
+        await PriceSnapshotModel.updateOne(
+          { _id: documentId },
+          { $set: { productId: options.targetProductId, observationKey: nextKey } },
+          session ? { session } : {},
+        );
+        moved += 1;
+      }
+
+      return { moved, deduped };
+    },
+
+    async countForProduct(productId: string): Promise<number> {
+      return PriceSnapshotModel.countDocuments({ productId });
     },
 
     async deleteRange(query: {

@@ -1,5 +1,7 @@
 import {
+  combineRollups,
   compareRollups,
+  rollupKey,
   type RollupInsertResult,
   type RollupListQuery,
   type RollupRecord,
@@ -48,6 +50,50 @@ export function createMemoryRollupStore(seed: readonly RollupRecord[] = []): Rol
 
       for (const rollup of rollups) records.set(rollup.rollupKey, rollup);
       return { deleted, inserted: rollups.length, existing: 0 };
+    },
+
+    async mergeProduct(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+    }): Promise<{ moved: number; combined: number }> {
+      let moved = 0;
+      let combined = 0;
+
+      for (const [key, record] of [...records.entries()]) {
+        if (record.productId !== options.sourceProductId) continue;
+
+        const nextKey = rollupKey({
+          productId: options.targetProductId,
+          sourceId: record.sourceId,
+          marketplaceId: record.marketplaceId,
+          currency: record.currency,
+          sourceVerification: record.sourceVerification,
+          dateKey: record.dateKey,
+        });
+
+        const existing = records.get(nextKey);
+        if (existing) {
+          const withTarget = { ...record, productId: options.targetProductId, rollupKey: nextKey };
+          records.set(nextKey, combineRollups(existing, withTarget));
+          records.delete(key);
+          combined += 1;
+          continue;
+        }
+
+        records.delete(key);
+        records.set(nextKey, {
+          ...record,
+          productId: options.targetProductId,
+          rollupKey: nextKey,
+        });
+        moved += 1;
+      }
+
+      return { moved, combined };
+    },
+
+    async countForProduct(productId: string): Promise<number> {
+      return [...records.values()].filter((record) => record.productId === productId).length;
     },
 
     async listForDay(dateKey: string): Promise<RollupRecord[]> {
