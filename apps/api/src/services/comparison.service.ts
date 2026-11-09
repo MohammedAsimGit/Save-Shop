@@ -190,8 +190,12 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
       }
 
       const now = clock();
+      // A merged product is archived, not deleted. Every read below uses the
+      // surviving id so offers, snapshots and the cache cannot accumulate under the
+      // old record after a merge.
+      const canonicalProductId = product.id;
 
-      const cached = await readCachedComparison(productId, now);
+      const cached = await readCachedComparison(canonicalProductId, now);
       if (cached) return cached;
 
       const snapshots: unknown[] = [];
@@ -201,11 +205,11 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
       const results = await Promise.all(
         registry.enabledAdapters.map(async (adapter) => {
           try {
-            const result = await adapter.fetchOffers(productId, { now });
+            const result = await adapter.fetchOffers(canonicalProductId, { now });
             return { adapter, result };
           } catch (error) {
             logger.warn(
-              { err: error, sourceId: adapter.source.id, productId },
+              { err: error, sourceId: adapter.source.id, productId: canonicalProductId },
               'Price source failed; continuing with remaining sources',
             );
             return { adapter, error };
@@ -230,7 +234,7 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
         sources: registry.sources,
         currency: COMPARISON_CURRENCY,
         now,
-        productId,
+        productId: canonicalProductId,
       });
 
       const response = withProduct(comparison, {
@@ -251,7 +255,7 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
       }
 
       try {
-        const listings = await catalogueService.getListings(productId);
+        const listings = await catalogueService.getListings(canonicalProductId);
         if (listings.listingSummary.unresolved > 0) {
           identityNotices.push(
             `${listings.listingSummary.unresolved} listing(s) could not be resolved to this product and are not part of this comparison.`,
@@ -271,7 +275,7 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
 
       // A degraded run must not become the cached answer for the next few minutes.
       if (failedSources === 0) {
-        await writeCachedComparison(productId, complete, now);
+        await writeCachedComparison(canonicalProductId, complete, now);
       }
 
       return complete;

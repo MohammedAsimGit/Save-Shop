@@ -29,6 +29,7 @@ clean and no prior work was reset.
 - `apps/api/tests/adminAuth.test.ts`
 - `apps/api/tests/adminReview.test.ts`
 - `apps/api/tests/adminMerge.test.ts`
+- `apps/api/tests/mergedProductReads.test.ts` (history follows a merge redirect)
 
 ### Created — shared, web, docs
 
@@ -130,6 +131,11 @@ server the idempotent steps run without one. Failures leave a recovery run; `npm
 repair-merges` re-applies and completes it or marks it failed with a reason. Rollback is
 backup-based; see the limitations.
 
+Comparison and history requests for an archived id resolve through `mergedInto` before reading
+snapshots, rollups or the cache, so they use the surviving product rather than returning an empty
+window. `mergedProductReads.test.ts` exercises the real singleton catalogue, merge service and
+history service to prove that redirect.
+
 ## 7. Audit architecture
 
 `catalogue_audit_events` is append-only: actor, action, target type/id, previous/new state, reason,
@@ -167,7 +173,7 @@ UI convenience only; no test claims otherwise.
 
 | Gate                   | Result                                                              |
 | ---------------------- | ------------------------------------------------------------------- |
-| `npm test`             | pass — 297 tests: API 225, web 19, mobile 19, shared 34             |
+| `npm test`             | pass — 298 tests: API 226, web 19, mobile 19, shared 34             |
 | `npm run typecheck`    | pass (shared, API incl. tests, mobile, web)                         |
 | `npm run lint`         | pass, 0 errors, 0 warnings                                          |
 | `npm run format:check` | pass                                                                |
@@ -189,8 +195,9 @@ UI convenience only; no test claims otherwise.
 
 ## 12. Git
 
-All changes are in one commit created after this report; see `git log -1`. The working tree is clean
-afterwards.
+Sprint 6 is committed in `0fe68bd` ("Add secure, audited catalogue review and administration"), with
+a follow-up commit covering the comparison/history merge redirect and its test. The working tree is
+clean afterwards.
 
 ## 13. Recommended next sprint (Sprint 7)
 

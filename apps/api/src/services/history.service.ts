@@ -164,7 +164,9 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
       const from = new Date(now.getTime() - HISTORY_PERIOD_DAYS[query.period] * 86_400_000);
 
       const stored = await store.listHistory({
-        productId,
+        // Follow a merge redirect: the archived id is still a valid request, but its
+        // observations now belong to the surviving product.
+        productId: product.id,
         from,
         to,
         ...(query.sourceId ? { sourceId: query.sourceId } : {}),
