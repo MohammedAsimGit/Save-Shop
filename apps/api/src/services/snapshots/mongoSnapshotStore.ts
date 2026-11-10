@@ -153,8 +153,11 @@ export function createMongoSnapshotStore(): SnapshotStore {
       readonly tx?: StoreSession;
     }): Promise<{ moved: number; deduped: number }> {
       const session = options.tx as ClientSession | undefined;
+      // Reading inside the session keeps the source set consistent with the writes
+      // below when another transaction touches the target in parallel.
       const documents = await PriceSnapshotModel.find({ productId: options.sourceProductId })
         .sort({ capturedAt: 1, observationKey: 1 })
+        .session(session ?? null)
         .lean<PriceSnapshotFields[]>();
 
       let moved = 0;

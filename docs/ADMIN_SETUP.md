@@ -150,14 +150,21 @@ variant attributes, or a sample/verified or provenance mismatch.
 Execution:
 
 1. The run is written first (`catalogue_merge_runs`, `pending`) with planned counts.
-2. Listings and variant links move; price snapshots are re-keyed and duplicate observations dropped;
+2. The source product is atomically claimed for that run (`mergeRunId` compare-and-set). A second
+   merge of the same source — including one into a different target — is refused with 409, so one
+   source can never be split across two survivors.
+3. Listings and variant links move; price snapshots are re-keyed and duplicate observations dropped;
    daily rollups are re-keyed and same-group rollups combined arithmetically.
-3. The source is archived with `mergedInto` and `mergedAt` — never deleted — so old links redirect.
-4. The run is marked `completed` with the applied counts.
+4. The source is archived with `mergedInto` and `mergedAt` — never deleted — so old links redirect,
+   and the archive is conditional on the run still owning the claim.
+5. The run is marked `completed` with the applied counts. The claim link is retained on the source
+   as the audit connection to the run.
 
 MongoDB transactions are used when the deployment supports them (`transactionUsed: true`). A
 standalone server cannot run multi-document transactions; the service detects that, retries the
-same idempotent steps without a session, and records `transactionUsed: false`.
+same idempotent steps without a session, and records `transactionUsed: false`. Transactions are not
+retried inside the request: a failed run is recovered by the repair command below, which re-claims
+with the same run id and re-applies only the idempotent steps.
 
 ### Recovery
 
@@ -169,8 +176,10 @@ npm run admin -- repair-merges
 ```
 
 This re-applies the idempotent migration for every unfinished run and marks it completed, or marks
-it failed with a reason if the source/target no longer exists. Repeated merges are refused because
-the source already has `mergedInto` set.
+it failed with a reason if the source/target no longer exists. A run that cannot re-claim the source
+because another run owns it, or because the source was already merged into a _different_ target, is
+reported as failed and stays open for an operator; it never redirects the source. Repeated merges
+are refused because the source already has `mergedInto` set.
 
 ### Rollback
 
@@ -178,6 +187,73 @@ There is no automatic un-merge. The merge is reversible by an operator if needed
 document is intact and archived rather than deleted, but listings, snapshots and rollups have moved
 and combined rows cannot be split. Take a database backup before a bulk merge and treat merging as
 a forward-only, audited operation.
+
+### Replica-set integration tests
+
+`npm run test:integration:merge` proves the merge against a real MongoDB replica set (real sessions,
+transactions, rollback, concurrency and recovery). It is a separate command on purpose: `npm test`
+stays fast, uses in-memory stores, and must never depend on a local MongoDB.
+
+By default the command starts a throwaway single-node replica set with `mongodb-memory-server` (a
+development dependency; the `mongod` binary is downloaded once on the first run). No Docker,
+credentials or running database is required:
+
+```bash
+npm run test:integration:merge
+```
+
+To use an existing transactional deployment instead (for example a Docker replica set in CI), pass
+`MONGODB_TEST_URI`:
+
+```bash
+MONGODB_TEST_URI="mongodb://127.0.0.1:27017/saveshop_merge_integration_test?replicaSet=rs0" \
+  npm run test:integration:merge
+```
+
+Safety guards (the suite fails, it never skips or falls back to a non-transactional path):
+
+- only `MONGODB_TEST_URI` is read; the development/production `MONGODB_URI` is never used;
+- `NODE_ENV=production` is refused;
+- the database name must contain `test`, and the suite deletes documents from that database before
+  each test;
+- a non-loopback host is refused unless `MONGODB_TEST_ALLOW_REMOTE=1` is set for a dedicated CI
+  cluster;
+- the URI must name a replica set (`?replicaSet=…`) and the connected server is checked for
+  `setName`; otherwise the command exits non-zero.
+
+Docker replica set (example, `mongosh` included in the image):
+
+```bash
+docker run -d --name saveshop-mongo-rs -p 27017:27017 mongo:8 --replSet rs0 --bind_ip_all
+docker exec saveshop-mongo-rs mongosh --eval \
+  "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]})"
+```
+
+Shut it down with `docker stop saveshop-mongo-rs && docker rm saveshop-mongo-rs`.
+
+Troubleshooting:
+
+- **Binary download blocked / offline:** use the Docker replica set above; the first
+  `mongodb-memory-server` run needs to download `mongod` if it is not cached.
+- **`not a replica set` error:** the server is standalone or the URI omits the replica set name.
+  Re-initiate it (`rs.initiate(...)`) and include `?replicaSet=rs0`.
+- **`Refusing to use database …`:** the database name did not contain `test`. Never point this
+  command at a development or production database.
+- **`Refusing to use non-loopback MongoDB host …`:** export `MONGODB_TEST_ALLOW_REMOTE=1` only for a
+  dedicated CI test cluster.
+- **`Transaction numbers are only allowed …`:** the target is not transactional; the suite fails
+  rather than skipping.
+- **Port already in use:** stop the conflicting `mongod` or use a different `MONGODB_TEST_URI`.
+- On this Windows workspace, npm lifecycle scripts needed the Node installation directory
+  (`C:\\Program Files\\nodejs`) on `PATH`.
+
+Transaction tests vs standalone fallback tests:
+
+- `npm test` → `adminMerge.test.ts` uses in-memory stores and asserts `transactionUsed: false`; it
+  covers validation, idempotency and recovery logic, not MongoDB transactions.
+- `npm run test:integration:merge` → the replica-set suite asserts `transactionUsed: true`, reads the
+  committed/rolled-back documents directly, and would fail rather than skip if transactions were
+  unavailable.
 
 ## 8. Audit trail
 

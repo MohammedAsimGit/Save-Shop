@@ -45,6 +45,8 @@ function matchesQueueSearch(listing: StoredListing, query: string): boolean {
 export function createMemoryCatalogueStore(): CatalogueStore {
   const products = new Map<string, CanonicalProduct>();
   const listings = new Map<string, StoredListing>();
+  /** Mirrors `mergeRunId` in MongoDB: which run owns an in-flight merge. */
+  const mergeClaims = new Map<string, string>();
 
   return {
     kind: 'memory',
@@ -192,11 +194,40 @@ export function createMemoryCatalogueStore(): CatalogueStore {
       };
     },
 
+    async claimMerge(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly runId: string;
+    }): Promise<boolean> {
+      const source = products.get(options.sourceProductId);
+      if (!source) return false;
+
+      // Already archived into this exact target: re-applying is harmless.
+      if (source.mergedInto === options.targetProductId) return true;
+      if (source.mergedInto) return false;
+
+      const claim = mergeClaims.get(options.sourceProductId);
+      if (claim && claim !== options.runId) return false;
+
+      mergeClaims.set(options.sourceProductId, options.runId);
+      return true;
+    },
+
     async mergeProductReferences(options: {
       readonly sourceProductId: string;
       readonly targetProductId: string;
       readonly mergedAt: Date;
+      readonly runId: string;
     }): Promise<MergeReferenceCounts> {
+      const owner = mergeClaims.get(options.sourceProductId);
+      const alreadyArchived =
+        products.get(options.sourceProductId)?.mergedInto === options.targetProductId;
+      if (!alreadyArchived && owner !== options.runId) {
+        throw new Error(
+          `Merge run ${options.runId} no longer owns product ${options.sourceProductId}`,
+        );
+      }
+
       let movedListings = 0;
       for (const [id, listing] of listings) {
         if (listing.canonicalProductId !== options.sourceProductId) continue;

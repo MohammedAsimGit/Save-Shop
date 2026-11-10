@@ -14,6 +14,7 @@ import {
   MarketplaceListingModel,
   type MarketplaceListingFields,
 } from '../../models/marketplaceListing.js';
+import { AppError } from '../../utils/AppError.js';
 import {
   buildSearchFields,
   type CatalogueStore,
@@ -332,10 +333,39 @@ export function createMongoCatalogueStore(): CatalogueStore {
       return { listings, variants };
     },
 
+    async claimMerge(options: {
+      readonly sourceProductId: string;
+      readonly targetProductId: string;
+      readonly runId: string;
+      readonly tx?: StoreSession;
+    }): Promise<boolean> {
+      const session = sessionOf(options.tx);
+
+      // One conditional write decides ownership. `null` also matches documents that
+      // predate the claim field, so no migration is needed.
+      const result = await CanonicalProductModel.updateOne(
+        {
+          id: options.sourceProductId,
+          $or: [
+            { mergedInto: null, mergeRunId: null },
+            { mergedInto: null, mergeRunId: options.runId },
+            // Already archived into this exact target (by this run, or by a run
+            // that won a race): re-applying the idempotent steps is harmless.
+            { mergedInto: options.targetProductId },
+          ],
+        },
+        { $set: { mergeRunId: options.runId } },
+        session ? { session } : {},
+      );
+
+      return result.modifiedCount === 1 || result.matchedCount === 1;
+    },
+
     async mergeProductReferences(options: {
       readonly sourceProductId: string;
       readonly targetProductId: string;
       readonly mergedAt: Date;
+      readonly runId: string;
       readonly tx?: StoreSession;
     }): Promise<MergeReferenceCounts> {
       const session = sessionOf(options.tx);
@@ -352,8 +382,17 @@ export function createMongoCatalogueStore(): CatalogueStore {
         session ? { session } : {},
       );
 
-      await CanonicalProductModel.updateOne(
-        { id: options.sourceProductId },
+      // Archiving is conditional on the claim we took before the move. Re-applying
+      // the same run after a crash matches the already-archived record, so recovery
+      // stays idempotent; another run's claim can never archive the source.
+      const archived = await CanonicalProductModel.updateOne(
+        {
+          id: options.sourceProductId,
+          $or: [
+            { mergedInto: null, mergeRunId: options.runId },
+            { mergedInto: options.targetProductId },
+          ],
+        },
         {
           $set: {
             status: 'archived',
@@ -364,6 +403,14 @@ export function createMongoCatalogueStore(): CatalogueStore {
         },
         session ? { session } : {},
       );
+
+      if (archived.matchedCount !== 1) {
+        throw new AppError({
+          statusCode: 409,
+          code: 'CONFLICT',
+          message: `Merge run ${options.runId} no longer owns product ${options.sourceProductId}`,
+        });
+      }
 
       return { listings: listings.modifiedCount, variants: variants.modifiedCount };
     },

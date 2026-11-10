@@ -228,12 +228,14 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
     sourceProductId: string,
     targetProductId: string,
     mergedAt: Date,
+    runId: string,
     tx?: StoreSession,
   ): Promise<ApplyResult> {
     const refs = await catalogue.mergeProductReferences({
       sourceProductId,
       targetProductId,
       mergedAt,
+      runId,
       ...(tx ? { tx } : {}),
     });
 
@@ -270,10 +272,11 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
     sourceProductId: string,
     targetProductId: string,
     mergedAt: Date,
+    runId: string,
   ): Promise<{ readonly result: ApplyResult; readonly transactionUsed: boolean }> {
     if (mongoose.connection.readyState !== 1) {
       return {
-        result: await runSteps(sourceProductId, targetProductId, mergedAt),
+        result: await runSteps(sourceProductId, targetProductId, mergedAt, runId),
         transactionUsed: false,
       };
     }
@@ -281,7 +284,7 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
     const session = await mongoose.startSession();
     try {
       session.startTransaction();
-      const result = await runSteps(sourceProductId, targetProductId, mergedAt, session);
+      const result = await runSteps(sourceProductId, targetProductId, mergedAt, runId, session);
       await session.commitTransaction();
       return { result, transactionUsed: true };
     } catch (error) {
@@ -293,7 +296,7 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
       // multi-document transactions. The steps are idempotent, so retrying them
       // without a session is safe; the run records that no transaction was used.
       return {
-        result: await runSteps(sourceProductId, targetProductId, mergedAt),
+        result: await runSteps(sourceProductId, targetProductId, mergedAt, runId),
         transactionUsed: false,
       };
     } finally {
@@ -398,9 +401,32 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
 
       await adminStore.createMergeRun(run);
 
+      // Ownership is decided before anything moves. Without this compare-and-set a
+      // second merge of the same source could pass the assessment at the same time
+      // and split its listings, snapshots and rollups across two survivors.
+      const claimed = await catalogue.claimMerge({
+        sourceProductId: assessment.source.id,
+        targetProductId: assessment.target.id,
+        runId: run.id,
+      });
+
+      if (!claimed) {
+        await failRun(
+          run.id,
+          new Error('the source product is claimed by another merge run'),
+          clock(),
+        );
+        throw new AppError({
+          statusCode: 409,
+          code: 'CONFLICT',
+          message: 'Another merge is already in progress for this product',
+          details: ['Wait for the in-flight merge to finish, then re-check the record.'],
+        });
+      }
+
       let applied: { result: ApplyResult; transactionUsed: boolean };
       try {
-        applied = await apply(assessment.source.id, assessment.target.id, now);
+        applied = await apply(assessment.source.id, assessment.target.id, now, run.id);
       } catch (error) {
         // A failed transaction is rolled back; a failed non-transactional attempt may
         // be half-done. Either way the run is the recovery handle: it stays pending so
@@ -502,10 +528,30 @@ export function createMergeService(options: MergeServiceOptions): MergeService {
             continue;
           }
 
+          // Recovery re-claims with the same run id, so it can finish work its own
+          // run started. A claim held by a different run means this run must not
+          // touch the source; it is reported as failed instead of corrupting data.
+          const claimed = await catalogue.claimMerge({
+            sourceProductId: run.sourceProductId,
+            targetProductId: run.targetProductId,
+            runId: run.id,
+          });
+
+          if (!claimed) {
+            await failRun(
+              run.id,
+              new Error('the source product is claimed by another merge run'),
+              now,
+            );
+            failed += 1;
+            continue;
+          }
+
           const { result, transactionUsed } = await apply(
             run.sourceProductId,
             run.targetProductId,
             now,
+            run.id,
           );
           const counts = countsOf(result);
 

@@ -86,8 +86,12 @@ export function createMongoRollupStore(): RollupStore {
       readonly tx?: StoreSession;
     }): Promise<{ moved: number; combined: number }> {
       const session = options.tx as ClientSession | undefined;
+      // The source read must see the same snapshot as the writes: without the
+      // session it could read target rollups committed after the transaction began
+      // and then overwrite them with stale arithmetic.
       const documents = await PriceDailyRollupModel.find({ productId: options.sourceProductId })
         .sort({ dateKey: 1, rollupKey: 1 })
+        .session(session ?? null)
         .lean<PriceDailyRollupFields[]>();
 
       let moved = 0;

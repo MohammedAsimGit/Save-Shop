@@ -14,7 +14,8 @@
     "catalogue": "tsx src/scripts/catalogue.ts",
     "admin": "tsx src/scripts/admin.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration:merge": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@smart-shopping/shared": "*",

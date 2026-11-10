@@ -28,6 +28,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "test:integration:merge": "npm run build:shared && npm run test:integration:merge --workspace @smart-shopping/api",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "devDependencies": {

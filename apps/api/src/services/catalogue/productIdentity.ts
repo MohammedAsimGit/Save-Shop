@@ -28,30 +28,45 @@ export interface ResolvedProductIdentity {
 
 const DEMO_CATALOG_ID = 'demo-catalog';
 
-export async function resolveProductIdentity(
-  productId: string,
-): Promise<ResolvedProductIdentity | null> {
-  const canonical = await catalogueService.resolveProduct(productId);
-  if (canonical) {
+/**
+ * Builds the identity resolver around a catalogue service. Injectable so a test can
+ * run the real redirect logic against its own persistence layer instead of the
+ * process-wide singleton.
+ */
+export function createProductIdentityResolver(catalogue: {
+  readonly resolveProduct: (productId: string) => Promise<{
+    readonly id: string;
+    readonly name: string;
+    readonly brand: string;
+    readonly isSample: boolean;
+  } | null>;
+}): (productId: string) => Promise<ResolvedProductIdentity | null> {
+  return async (productId) => {
+    const canonical = await catalogue.resolveProduct(productId);
+    if (canonical) {
+      return {
+        id: canonical.id,
+        title: canonical.name,
+        brand: canonical.brand,
+        catalog: DEMO_CATALOG_ID,
+        isSample: canonical.isSample,
+        canonical: true,
+      };
+    }
+
+    const demo = demoProducts.find((entry) => entry.id === productId);
+    if (!demo) return null;
+
     return {
-      id: canonical.id,
-      title: canonical.name,
-      brand: canonical.brand,
+      id: demo.id,
+      title: demo.title,
+      brand: demo.brand,
       catalog: DEMO_CATALOG_ID,
-      isSample: canonical.isSample,
-      canonical: true,
+      isSample: true,
+      canonical: false,
     };
-  }
-
-  const demo = demoProducts.find((entry) => entry.id === productId);
-  if (!demo) return null;
-
-  return {
-    id: demo.id,
-    title: demo.title,
-    brand: demo.brand,
-    catalog: DEMO_CATALOG_ID,
-    isSample: true,
-    canonical: false,
   };
 }
+
+/** Process-wide resolver used by the comparison and history endpoints. */
+export const resolveProductIdentity = createProductIdentityResolver(catalogueService);

@@ -1,9 +1,15 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    /**
+     * Replica-set tests are a separate, slower suite with their own command
+     * (`npm run test:integration:merge`). Keeping them out of `npm test` means the
+     * default suite never depends on a transactional MongoDB deployment.
+     */
+    exclude: [...configDefaults.exclude, 'tests/integration/**'],
     // Tests must not depend on whatever is exported in the developer's shell.
     env: {
       NODE_ENV: 'test',

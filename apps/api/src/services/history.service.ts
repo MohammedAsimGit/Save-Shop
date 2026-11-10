@@ -14,7 +14,10 @@ import {
 
 import { logger } from '../config/logger.js';
 import { AppError } from '../utils/AppError.js';
-import { resolveProductIdentity } from './catalogue/productIdentity.js';
+import {
+  resolveProductIdentity,
+  type ResolvedProductIdentity,
+} from './catalogue/productIdentity.js';
 import {
   rollupStore as sharedRollupStore,
   type RollupRecord,
@@ -53,6 +56,11 @@ export interface HistoryServiceOptions {
   /** Archived daily rollups; defaults to the process-wide store. */
   readonly rollupStore?: Pick<RollupStore, 'list'>;
   readonly sources?: readonly MarketSource[];
+  /**
+   * Identity lookup; defaults to the process-wide catalogue. Injectable so a test
+   * can exercise merge redirects against a real, dedicated persistence layer.
+   */
+  readonly resolveProduct?: (productId: string) => Promise<ResolvedProductIdentity | null>;
   readonly now?: () => Date;
 }
 
@@ -149,12 +157,13 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
   const clock = options.now ?? (() => new Date());
   const sources = options.sources ?? createSourceRegistry().sources;
   const sourcesById = new Map(sources.map((source) => [source.id, source]));
+  const resolveIdentity = options.resolveProduct ?? resolveProductIdentity;
 
   return {
     async getHistory(productId: string, query: PriceHistoryQuery): Promise<PriceHistoryResponse> {
       // Identity comes from the canonical catalogue, with the documented demo
       // fallback for products that only exist in the sample data.
-      const product = await resolveProductIdentity(productId);
+      const product = await resolveIdentity(productId);
       if (!product) {
         throw AppError.notFound(`Unknown product: ${productId}`);
       }
@@ -207,9 +216,11 @@ export function createHistoryService(options: HistoryServiceOptions = {}): Histo
         return `${a.marketplaceId}:${a.sourceId}`.localeCompare(`${b.marketplaceId}:${b.sourceId}`);
       });
 
-      // Archived days: only the requested window, filters and currency.
+      // Archived days: only the requested window, filters and currency. The rollup
+      // query must follow the same merge redirect as raw observations, otherwise an
+      // archived id would silently lose its compacted history.
       const archived = await rollupStore.list({
-        productId,
+        productId: product.id,
         fromDate: dateKeyOf(from),
         toDate: dateKeyOf(to),
         ...(query.sourceId ? { sourceId: query.sourceId } : {}),

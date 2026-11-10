@@ -3,6 +3,8 @@ dist/
 build/
 coverage/
 package-lock.json
+# Imported chat attachments saved by the tool; not project source.
+.cloud-attachments/
 apps/mobile/assets/
 *.png
 *.tsbuildinfo

@@ -153,11 +153,32 @@ export interface CatalogueStore {
   ): Promise<ListingReviewResult>;
   /** Counts used before a merge; no writes. */
   inspectMerge(productId: string): Promise<MergeInspection>;
-  /** Moves listings and variant links to the target and archives the source. */
+  /**
+   * Atomically claims the source product for one merge run.
+   *
+   * A conditional update is the concurrency guard: only one run can hold the claim,
+   * so a second merge of the same source (into any target) is refused instead of
+   * half-migrating the same rows. Re-claiming with the same `runId` is allowed, which
+   * is what makes recovery idempotent; a source already archived into `targetId` by
+   * the same run is also accepted so the re-applied steps are harmless no-ops.
+   *
+   * Returns false when another run owns the source or it is merged elsewhere.
+   */
+  claimMerge(options: {
+    readonly sourceProductId: string;
+    readonly targetProductId: string;
+    readonly runId: string;
+    readonly tx?: StoreSession;
+  }): Promise<boolean>;
+  /**
+   * Moves listings and variant links to the target and archives the source.
+   * `runId` makes the archive conditional on the caller still owning the claim.
+   */
   mergeProductReferences(options: {
     readonly sourceProductId: string;
     readonly targetProductId: string;
     readonly mergedAt: Date;
+    readonly runId: string;
     readonly tx?: StoreSession;
   }): Promise<MergeReferenceCounts>;
   /** Candidates for identity matching; never returns more than `limit`. */

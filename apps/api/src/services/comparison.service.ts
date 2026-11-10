@@ -11,7 +11,10 @@ import { logger } from '../config/logger.js';
 import { AppError } from '../utils/AppError.js';
 import { comparisonCache, comparisonCacheKey, type ComparisonCache } from './cache/index.js';
 import { catalogueService } from './catalogue/index.js';
-import { resolveProductIdentity } from './catalogue/productIdentity.js';
+import {
+  resolveProductIdentity,
+  type ResolvedProductIdentity,
+} from './catalogue/productIdentity.js';
 import { snapshotStore as sharedSnapshotStore, type SnapshotStore } from './snapshots/index.js';
 import { createSourceRegistry, type SourceRegistryOptions } from './sources/registry.js';
 
@@ -49,6 +52,11 @@ export interface ComparisonServiceOptions extends SourceRegistryOptions {
   readonly persistDemoSnapshots?: boolean;
   /** Upper bound for a cached response; 0 disables caching. */
   readonly cacheTtlSeconds?: number;
+  /**
+   * Identity lookup; defaults to the process-wide catalogue. Injectable so a test
+   * can exercise merge redirects against a real, dedicated persistence layer.
+   */
+  readonly resolveProduct?: (productId: string) => Promise<ResolvedProductIdentity | null>;
 }
 
 export interface ComparisonService {
@@ -68,6 +76,7 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
   const clock = options.now ?? (() => new Date());
   const persistSample = options.persistDemoSnapshots ?? env.persistDemoSnapshots;
   const maxCacheTtlSeconds = options.cacheTtlSeconds ?? env.COMPARISON_CACHE_TTL_SECONDS;
+  const resolveIdentity = options.resolveProduct ?? resolveProductIdentity;
 
   const enabledSourceIds = registry.enabledAdapters.map((adapter) => adapter.source.id);
 
@@ -184,7 +193,7 @@ export function createComparisonService(options: ComparisonServiceOptions = {}):
     async getComparison(productId: string): Promise<ProductComparisonResponse> {
       // Identity comes from the canonical catalogue; the demo catalogue is only a
       // documented development fallback. An unresolved product is a 404.
-      const product = await resolveProductIdentity(productId);
+      const product = await resolveIdentity(productId);
       if (!product) {
         throw AppError.notFound(`Unknown product: ${productId}`);
       }

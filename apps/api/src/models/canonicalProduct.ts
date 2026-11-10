@@ -52,6 +52,13 @@ const canonicalProductSchema = new Schema(
      */
     mergedInto: { type: String, default: null, maxLength: 120 },
     mergedAt: { type: Date, default: null },
+    /**
+     * Merge run that claimed this source. The claim is a compare-and-set guard: it
+     * stops two concurrent merges from moving the same listings, snapshots and
+     * rollups into different targets. It is kept after the merge as the audit link
+     * between the archived record and the run that archived it.
+     */
+    mergeRunId: { type: String, default: null, maxLength: 120 },
     /** Denormalized search keys; derived, never editable through the API. */
     search: {
       text: { type: String, required: true },
