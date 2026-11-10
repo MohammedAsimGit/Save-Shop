@@ -189,6 +189,7 @@ single-node replica set, database `saveshop_merge_integration_test`.
 
 - `2f557a5` — Verify catalogue merges against a real MongoDB replica set (implementation, tests,
   `ADMIN_SETUP.md`, this report).
-- A documentation follow-up records this hash in the report; its own hash is visible in `git log`.
+- `af697ad` — Records implementation hash in the report.
+- `4710eca` — Add GitHub Actions CI pipeline for Save-Shop Sprint 8.
 
 The working tree is clean after the follow-up commit.
