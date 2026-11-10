@@ -187,5 +187,8 @@ single-node replica set, database `saveshop_merge_integration_test`.
 
 ## 12. Commit hashes
 
-- Implementation, tests and documentation: the Sprint 7 commit is the one containing this report
-  (see `git log -1`); its hash is recorded in the completion report for this sprint.
+- `2f557a5` — Verify catalogue merges against a real MongoDB replica set (implementation, tests,
+  `ADMIN_SETUP.md`, this report).
+- A documentation follow-up records this hash in the report; its own hash is visible in `git log`.
+
+The working tree is clean after the follow-up commit.
